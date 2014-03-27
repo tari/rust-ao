@@ -5,9 +5,16 @@
 
 #[allow(dead_code)];
 
+extern crate sync;
+
+use std::c_str::CString;
 use std::libc::c_int;
+use std::intrinsics::size_of;
 use std::os;
 use std::ptr;
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
+use std::raw::Repr;
 
 #[allow(non_camel_case_types)]
 mod ffi;
@@ -44,28 +51,9 @@ impl AoError {
     }
 }
 
-/// Must be called before performing any other operations.
+/// Describes audio sample formats.
 ///
-/// Initializes the libao internals, including loading plugins and reading
-/// configuration files.
-///
-/// This function must be called only once before a corresponding `shutdown`,
-/// and must be called from the main thread of an application.
-pub fn initialize() {
-    unsafe {
-        ffi::ao_initialize()
-    }
-}
-
-/// Shuts down libao
-///
-/// All open devices must be closed before calling this function.
-pub fn shutdown() {
-    unsafe {
-        ffi::ao_shutdown()
-    }
-}
-
+/// Used to specify the format which data will be fed to a Device
 pub struct SampleFormat {
     /// Bits per sample
     sample_bits: uint,
@@ -109,82 +97,97 @@ impl SampleFormat {
     }
 }
 
+/// Machine byte order.
 pub enum Endianness {
     /// Least-significant byte first
     Little = ffi::AO_FMT_LITTLE,
     /// Most-significant byte first
     Big = ffi::AO_FMT_BIG,
-    /// Current machine's default byte order
+    /// Machine's default byte order
     Native = ffi::AO_FMT_NATIVE
 }
 
-pub struct Driver(c_int);
+/// The master of all things libao.
+pub struct AO {
+    /// The canonical RcBox for this instance. Weak so that it's actually
+    /// freed when all devices are dropped.
+    priv rbox: Weak<RefCell<AO>>,
+}
 
-impl Driver {
-    /// Gets an output driver by name
+impl AO {
+    /// Initializes libao internals, including loading plugins and reading
+    /// configuration files.
+    ///
+    /// This function must be called only once before a corresponding `shutdown`,
+    /// and must be called from the main thread of an application.
+    pub fn init() -> Rc<RefCell<AO>> {
+        // We need to contain a pointer to ourselves, so uninit()
+        // (Actually we need the RcBox<AO>, but the effect is similar)
+        let new: AO = unsafe {
+            ffi::ao_initialize();
+            ::std::mem::uninit::<AO>()
+        };
+        // The master owner. Given back to the user.
+        let owner = Rc::new(RefCell::new(new));
+
+        // Give ourselves a weak ref to self to have a way to clone the box
+        // we're returning to the user.
+        owner.borrow_mut().rbox = owner.clone().downgrade();
+
+        owner
+    }
+
+    /// Gets the specified output driver or default.
+    ///
+    /// `name` specifies the name of the output driver to use, or pass the null
+    /// string (`""`) to get the default driver.
+    ///
+    /// Returns `None` if the driver is not available.
+    ///
+    /// # Drivers
     ///
     /// See the [libao docs](https://www.xiph.org/ao/doc/drivers.html) for
     /// the drivers provided by default. Note that this is not an exhaustive
     /// list, as user plugins may provide additional drivers.
-    pub fn by_name(name: &str) -> Option<Driver> {
-        Driver::wrap(name.with_c_str(|name| unsafe {
-            ffi::ao_driver_id(name)
-        }))
-    }
-    
-    /// Gets the default live output driver
     ///
-    /// A user-specified default driver will be chosen if configured, otherwise
-    /// a driver that will work on the current system is selected.
-    pub fn default() -> Option<Driver> {
-        Driver::wrap(unsafe {
-            ffi::ao_default_driver_id()
-        })
-    }
+    /// The default driver may be user-specified, or it will be automatically
+    /// chosen to be a live output supported by the current platform. This
+    /// implies that the default driver will not necessarily be a live output.
+    pub fn get_driver(&self, name: &str) -> Option<Driver> {
+        let id = if name != "" {
+            name.with_c_str(|name| unsafe {
+                ffi::ao_driver_id(name)
+            })
+        } else {
+            unsafe {
+                ffi::ao_default_driver_id()
+            }
+        };
 
-    /// Translates `ao_*_driver_id()` results
-    fn wrap(id: c_int) -> Option<Driver> {
+        println!("Driver id = {}", id);
         if id == -1 {
             None
         } else {
             Some(Driver(id))
         }
     }
-}
-
-pub struct Device(*ffi::ao_device);
-
-impl Device {
-    /// Constructs a Device from `*ao_device`.
-    fn result(handle: *ffi::ao_device) -> AoResult<Device> {
-        unsafe {
-            match handle.to_option() {
-                None => {
-                    Err(AoError::from_errno())
-                }
-                Some(d) => Ok(Device(d))
-            }
-        }
-    }
 
     /// Opens a live audio output device.
     ///
-    /// ## Errors
+    /// # Errors
     ///
     ///  * `NotLive`: the specified driver is not a live output device
     ///  * `BadOption`: a specified valid option has an invalid value
     ///  * `OpenDevice`: cannot open the output device
     ///  * `Unknown`: Unspecified failure
-    pub fn open(driver: &Driver, format: &SampleFormat/*,
-            options: Option<OutputOptions>*/) -> AoResult<Device> {
-        let &Driver(id) = driver;
-        format.with_native(|f| {
-            Device::result(
-                unsafe {
-                    ffi::ao_open_live(id, f, ptr::null())
-                }
-            )}
-        )
+    pub fn open_device(&mut self, driver: Driver, format: &SampleFormat/*,
+                       options: */) -> AoResult<Device> {
+        let Driver(id) = driver;
+        let handle = format.with_native(|f| unsafe {
+            ffi::ao_open_live(id, f, ptr::null())
+        });
+
+        self.create_device(handle)
     }
 
     /// Opens a file for audio output.
@@ -192,31 +195,110 @@ impl Device {
     /// `path` specifies the file to write to, and `overwrite` will
     /// automatically replace any existing file if `true`.
     ///
-    /// ## Errors
+    /// # Errors
     ///
     /// Returns similar errors to `open`, with several additions:
-    /// `OpenFile` if the specified file cannot be opened, and
-    /// `FileExists` if the file exists and `overwrite` is `false`.
-    pub fn open_file(driver: Driver, format: &SampleFormat,
+    ///
+    ///  * `OpenFile`: the specified file cannot be opened, and
+    ///  * `FileExists`: the file exists and `overwrite` is `false`.
+    pub fn open_file(&mut self, driver: Driver, format: &SampleFormat,
                      path: &Path, overwrite: bool/*,
-                     options: Option<OutputOptions>*/) -> AoResult<Device> {
+                     options: */) -> AoResult<Device> {
         let Driver(id) = driver;
-        format.with_native(|f| {
+        let handle = format.with_native(|f| {
             path.with_c_str(|filename| unsafe {
-                Device::result(
-                    ffi::ao_open_file(id, filename, overwrite as c_int,
-                                      f, ptr::null())
-                )
+                ffi::ao_open_file(id, filename, overwrite as c_int, f, ptr::null())
             })
-        })
+        });
+
+        self.create_device(handle)
+    }
+
+    /// Shortcut to register a device, given the FFI handle to it
+    fn create_device(&mut self, handle: *ffi::ao_device) -> AoResult<Device> {
+        // Since this AO still exists, rbox must still be valid.
+        // The new Device will own a ref to us.
+        let rc = self.rbox.clone().upgrade().unwrap();
+
+        let opt = unsafe {
+            handle.to_option()
+        };
+
+        match opt {
+            None => {
+                Err(AoError::from_errno())
+            }
+            Some(d) => Ok(Device {
+                id: d,
+                lib_instance: rc
+            })
+        }
     }
 }
 
+#[unsafe_destructor]
+impl Drop for AO {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::ao_shutdown();
+        }
+    }
+}
+
+/// Handle to a driver.
+///
+/// You shouldn't construct these manually. Use `AO::get_driver` instead.
+pub struct Driver(c_int);
+
+pub enum DriverType {
+    Live,
+    File
+}
+
+#[deriving(Show)]
+pub struct DriverInfo {
+    //flavor: DriverType,
+    name: ~str,
+    //short_name: CString,
+    //comment: CString,
+}
+
+impl Driver {
+    pub fn get_info(&self) -> Option<DriverInfo> {
+        let &Driver(id) = self;
+        unsafe {
+            ffi::ao_driver_info(id).to_option().map(|info| {
+                let name = CString::new(info.name, false).as_str().unwrap().into_owned();
+                DriverInfo {
+                    name: name
+//                    short_name: CString::new(info.short_name, false),
+//                    comment: CString::new(info.comment, false)
+                }
+            })
+        }
+    }
+}
+
+struct Device {
+    id: *ffi::ao_device,
+    lib_instance: Rc<RefCell<AO>>
+}
+
+impl Device {
+    pub fn play<T>(&self, samples: &[T]) {
+        let slice = samples.repr();
+        unsafe {
+            let len = slice.len * size_of::<T>();
+            ffi::ao_play(self.id, slice.data as *i8, len as u32);
+        }
+    }
+}
+
+#[unsafe_destructor]
 impl Drop for Device {
     fn drop(&mut self) {
-        let Device(handle) = *self;
         unsafe {
-            ffi::ao_close(handle);
+            ffi::ao_close(self.id);
         }
     }
 }
