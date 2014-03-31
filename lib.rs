@@ -3,20 +3,18 @@
 #[license = "BSD"];
 #[crate_type = "dylib"];
 
-#[allow(dead_code)];
-
 extern crate sync;
 
+use std::cast;
 use std::c_str::CString;
 use std::libc::c_int;
 use std::intrinsics::size_of;
 use std::os;
 use std::ptr;
-use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 use std::raw::Repr;
 
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, dead_code)]
 mod ffi;
 
 pub type AoResult<T> = Result<T, AoError>;
@@ -31,6 +29,7 @@ pub enum AoError {
     NotLive = ffi::AO_ENOTLIVE,
     BadOption = ffi::AO_EBADOPTION,
     OpenDevice = ffi::AO_EOPENDEVICE,
+    OpenFile = ffi::AO_EOPENFILE,
     FileExists = ffi::AO_EFILEEXISTS,
     BadFormat = ffi::AO_EBADFORMAT,
     Unknown = ffi::AO_EFAIL
@@ -51,12 +50,22 @@ impl AoError {
     }
 }
 
+/// Type bound for sample formats
+///
+/// All types that implement `Sample` should be raw enough to permit output
+/// without additional processing. Conspicuously missing from the default impls
+/// is a 24-bit type, simply because there isn't a Rust-native 24-bit type.
+pub trait Sample { }
+impl Sample for i8 { }
+impl Sample for i16 { }
+impl Sample for i32 { }
+
 /// Describes audio sample formats.
 ///
 /// Used to specify the format which data will be fed to a Device
-pub struct SampleFormat {
+pub struct SampleFormat<S> {
     /// Bits per sample
-    sample_bits: uint,
+    //sample_bits: uint,
     /// Samples per second (per channel)
     sample_rate: uint,
     /// Number of channels
@@ -73,14 +82,17 @@ pub struct SampleFormat {
     matrix: Option<~str>
 }
 
-impl SampleFormat {
+impl<S: Sample> SampleFormat<S> {
     fn with_native<T>(&self, f: |*ffi::ao_sample_format| -> T) -> T {
+        let sample_size = unsafe {
+            size_of::<S>() * 8
+        };
         // The caller of ao_open_* functions retains ownership of the ao_format
         // it passes in, but the native representation owns a raw C string.
         // We must ensure the raw C string is freed, so the actual
         // ao_sample_format never leaves this scope.
         let mut native = ffi::ao_sample_format {
-            bits: self.sample_bits as c_int,
+            bits: sample_size as c_int,
             rate: self.sample_rate as c_int,
             channels: self.channels as c_int,
             byte_format: self.byte_order as c_int,
@@ -111,7 +123,7 @@ pub enum Endianness {
 pub struct AO {
     /// The canonical RcBox for this instance. Weak so that it's actually
     /// freed when all devices are dropped.
-    priv rbox: Weak<RefCell<AO>>,
+    priv rbox: Weak<AO>,
 }
 
 impl AO {
@@ -120,7 +132,7 @@ impl AO {
     ///
     /// This function must be called only once before a corresponding `shutdown`,
     /// and must be called from the main thread of an application.
-    pub fn init() -> Rc<RefCell<AO>> {
+    pub fn init() -> Rc<AO> {
         // We need to contain a pointer to ourselves, so uninit()
         // (Actually we need the RcBox<AO>, but the effect is similar)
         let new: AO = unsafe {
@@ -128,11 +140,17 @@ impl AO {
             ::std::mem::uninit::<AO>()
         };
         // The master owner. Given back to the user.
-        let owner = Rc::new(RefCell::new(new));
+        let owner = Rc::new(new);
 
         // Give ourselves a weak ref to self to have a way to clone the box
         // we're returning to the user.
-        owner.borrow_mut().rbox = owner.clone().downgrade();
+        // Must force the value contained in the Rc to be mutable so we can
+        // finish initialization. This is safe because nobody else has refs
+        // to it yet.
+        let m: &mut AO = unsafe {
+            cast::transmute(owner.deref())
+        };
+        m.rbox = owner.clone().downgrade();
 
         owner
     }
@@ -180,8 +198,8 @@ impl AO {
     ///  * `BadOption`: a specified valid option has an invalid value
     ///  * `OpenDevice`: cannot open the output device
     ///  * `Unknown`: Unspecified failure
-    pub fn open_device(&mut self, driver: Driver, format: &SampleFormat/*,
-                       options: */) -> AoResult<Device> {
+    pub fn open_device<S: Sample>(&mut self, driver: Driver, format: &SampleFormat<S>/*,
+                       options: */) -> AoResult<Device<S>> {
         let Driver(id) = driver;
         let handle = format.with_native(|f| unsafe {
             ffi::ao_open_live(id, f, ptr::null())
@@ -201,9 +219,9 @@ impl AO {
     ///
     ///  * `OpenFile`: the specified file cannot be opened, and
     ///  * `FileExists`: the file exists and `overwrite` is `false`.
-    pub fn open_file(&mut self, driver: Driver, format: &SampleFormat,
+    pub fn open_file<S: Sample>(&mut self, driver: Driver, format: &SampleFormat<S>,
                      path: &Path, overwrite: bool/*,
-                     options: */) -> AoResult<Device> {
+                     options: */) -> AoResult<Device<S>> {
         let Driver(id) = driver;
         let handle = format.with_native(|f| {
             path.with_c_str(|filename| unsafe {
@@ -215,9 +233,10 @@ impl AO {
     }
 
     /// Shortcut to register a device, given the FFI handle to it
-    fn create_device(&mut self, handle: *ffi::ao_device) -> AoResult<Device> {
-        // Since this AO still exists, rbox must still be valid.
-        // The new Device will own a ref to us.
+    fn create_device<S>(&mut self, handle: *ffi::ao_device) -> AoResult<Device<S>> {
+        // Give out another Rc which is a strong ref to self.
+        // Since self must exist, unwrap is safe because rbox points to
+        // self.
         let rc = self.rbox.clone().upgrade().unwrap();
 
         let opt = unsafe {
@@ -279,23 +298,23 @@ impl Driver {
     }
 }
 
-struct Device {
-    id: *ffi::ao_device,
-    lib_instance: Rc<RefCell<AO>>
+pub struct Device<S> {
+    priv id: *ffi::ao_device,
+    priv lib_instance: Rc<AO>
 }
 
-impl Device {
-    pub fn play<T>(&self, samples: &[T]) {
+impl<S: Sample> Device<S> {
+    pub fn play(&self, samples: &[S]) {
         let slice = samples.repr();
         unsafe {
-            let len = slice.len * size_of::<T>();
+            let len = slice.len * size_of::<S>();
             ffi::ao_play(self.id, slice.data as *i8, len as u32);
         }
     }
 }
 
 #[unsafe_destructor]
-impl Drop for Device {
+impl<S> Drop for Device<S> {
     fn drop(&mut self) {
         unsafe {
             ffi::ao_close(self.id);
