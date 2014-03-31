@@ -1,7 +1,7 @@
-#[crate_id = "ao_demo#0.1"];
-#[desc = "libao bindings demo"];
-#[license = "BSD"];
-#[crate_type = "bin"];
+#![crate_id = "ao_demo#0.1"]
+#![desc = "libao bindings demo"]
+#![license = "BSD"]
+#![crate_type = "bin"]
 
 extern crate ao;
 extern crate rand;
@@ -13,25 +13,15 @@ use rand::distributions::normal::Normal;
 use std::num::{Bounded, cast};
 
 fn main() {
-    let _control = AO::init();
-    let mut control = _control.borrow_mut();
-    
     let args = ::std::os::args();
     let driver_name = if args.len() > 1 {
         args[1]
     } else {
         ~""
     };
+
     println!("Using driver {}", driver_name);
-
-    let driver = match control.get_driver(driver_name) {
-        None => fail!("Couldn't get driver \"{}\"", driver_name),
-        Some(d) => d
-    };
-    println!("{}", driver.get_info());
-
-    let format = ao::SampleFormat {
-        sample_bits: 16,
+    let format: ao::SampleFormat<i16> = ao::SampleFormat {
         sample_rate: 44100,
         channels: 1,
         byte_order: ao::Native,
@@ -39,7 +29,10 @@ fn main() {
     };
 
     let path = Path::new("out.wav");
-    let device = match control.open_file(driver, &format, &path, true) {
+    let device = match ao::Device::file(AO::init(),
+                                        ao::DriverName(driver_name),
+                                        &format,
+                                        &path, true) {
         Ok(d) => d,
         Err(e) => fail!("Failed to open device: {}", e)
     };

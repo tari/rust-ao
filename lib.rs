@@ -1,17 +1,15 @@
-#[crate_id = "ao#0.1"];
-#[desc = "libao bindings"];
-#[license = "BSD"];
-#[crate_type = "dylib"];
+#![crate_id = "ao#0.1"]
+#![desc = "libao bindings"]
+#![license = "BSD"]
+#![crate_type = "dylib"]
 
 extern crate sync;
 
-use std::cast;
-use std::c_str::CString;
 use std::libc::c_int;
 use std::intrinsics::size_of;
 use std::os;
 use std::ptr;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::raw::Repr;
 
 #[allow(non_camel_case_types, dead_code)]
@@ -120,11 +118,7 @@ pub enum Endianness {
 }
 
 /// The master of all things libao.
-pub struct AO {
-    /// The canonical RcBox for this instance. Weak so that it's actually
-    /// freed when all devices are dropped.
-    priv rbox: Weak<AO>,
-}
+pub struct AO;
 
 impl AO {
     /// Initializes libao internals, including loading plugins and reading
@@ -133,26 +127,10 @@ impl AO {
     /// This function must be called only once before a corresponding `shutdown`,
     /// and must be called from the main thread of an application.
     pub fn init() -> Rc<AO> {
-        // We need to contain a pointer to ourselves, so uninit()
-        // (Actually we need the RcBox<AO>, but the effect is similar)
-        let new: AO = unsafe {
+        unsafe {
             ffi::ao_initialize();
-            ::std::mem::uninit::<AO>()
         };
-        // The master owner. Given back to the user.
-        let owner = Rc::new(new);
-
-        // Give ourselves a weak ref to self to have a way to clone the box
-        // we're returning to the user.
-        // Must force the value contained in the Rc to be mutable so we can
-        // finish initialization. This is safe because nobody else has refs
-        // to it yet.
-        let m: &mut AO = unsafe {
-            cast::transmute(owner.deref())
-        };
-        m.rbox = owner.clone().downgrade();
-
-        owner
+        Rc::new(AO)
     }
 
     /// Gets the specified output driver or default.
@@ -182,77 +160,14 @@ impl AO {
             }
         };
 
-        println!("Driver id = {}", id);
         if id == -1 {
             None
         } else {
-            Some(Driver(id))
+            Some(DriverID(id))
         }
     }
 
-    /// Opens a live audio output device.
-    ///
-    /// # Errors
-    ///
-    ///  * `NotLive`: the specified driver is not a live output device
-    ///  * `BadOption`: a specified valid option has an invalid value
-    ///  * `OpenDevice`: cannot open the output device
-    ///  * `Unknown`: Unspecified failure
-    pub fn open_device<S: Sample>(&mut self, driver: Driver, format: &SampleFormat<S>/*,
-                       options: */) -> AoResult<Device<S>> {
-        let Driver(id) = driver;
-        let handle = format.with_native(|f| unsafe {
-            ffi::ao_open_live(id, f, ptr::null())
-        });
 
-        self.create_device(handle)
-    }
-
-    /// Opens a file for audio output.
-    ///
-    /// `path` specifies the file to write to, and `overwrite` will
-    /// automatically replace any existing file if `true`.
-    ///
-    /// # Errors
-    ///
-    /// Returns similar errors to `open`, with several additions:
-    ///
-    ///  * `OpenFile`: the specified file cannot be opened, and
-    ///  * `FileExists`: the file exists and `overwrite` is `false`.
-    pub fn open_file<S: Sample>(&mut self, driver: Driver, format: &SampleFormat<S>,
-                     path: &Path, overwrite: bool/*,
-                     options: */) -> AoResult<Device<S>> {
-        let Driver(id) = driver;
-        let handle = format.with_native(|f| {
-            path.with_c_str(|filename| unsafe {
-                ffi::ao_open_file(id, filename, overwrite as c_int, f, ptr::null())
-            })
-        });
-
-        self.create_device(handle)
-    }
-
-    /// Shortcut to register a device, given the FFI handle to it
-    fn create_device<S>(&mut self, handle: *ffi::ao_device) -> AoResult<Device<S>> {
-        // Give out another Rc which is a strong ref to self.
-        // Since self must exist, unwrap is safe because rbox points to
-        // self.
-        let rc = self.rbox.clone().upgrade().unwrap();
-
-        let opt = unsafe {
-            handle.to_option()
-        };
-
-        match opt {
-            None => {
-                Err(AoError::from_errno())
-            }
-            Some(d) => Ok(Device {
-                id: d,
-                lib_instance: rc
-            })
-        }
-    }
 }
 
 #[unsafe_destructor]
@@ -264,10 +179,10 @@ impl Drop for AO {
     }
 }
 
-/// Handle to a driver.
-///
-/// You shouldn't construct these manually. Use `AO::get_driver` instead.
-pub struct Driver(c_int);
+pub enum Driver {
+    DriverID(c_int),
+    DriverName(~str)
+}
 
 pub enum DriverType {
     Live,
@@ -283,6 +198,7 @@ pub struct DriverInfo {
 }
 
 impl Driver {
+    /*
     pub fn get_info(&self) -> Option<DriverInfo> {
         let &Driver(id) = self;
         unsafe {
@@ -295,6 +211,17 @@ impl Driver {
                 }
             })
         }
+    }*/
+
+    fn as_raw(&self, lib: &AO) -> AoResult<c_int> {
+        match *self {
+            DriverID(id) => Ok(id),
+            DriverName(ref s) => match lib.get_driver(*s) {
+                None => Err(NoDriver),
+                Some(DriverID(id)) => Ok(id),
+                Some(DriverName(_)) => unreachable!()
+            }
+        }
     }
 }
 
@@ -304,6 +231,58 @@ pub struct Device<S> {
 }
 
 impl<S: Sample> Device<S> {
+    pub fn live(lib: Rc<AO>, driver: Driver, format: &SampleFormat<S>/*,
+                       options: */) -> AoResult<Device<S>> {
+        let id = try!(driver.as_raw(lib.deref()));
+
+        let handle = format.with_native(|f| unsafe {
+            ffi::ao_open_live(id, f, ptr::null())
+        });
+
+        Device::<S>::init(lib, handle)
+    }
+
+    /// Opens a file for audio output.
+    ///
+    /// `path` specifies the file to write to, and `overwrite` will
+    /// automatically replace any existing file if `true`.
+    ///
+    /// # Errors
+    ///
+    /// Returns similar errors to `open`, with several additions:
+    ///
+    ///  * `OpenFile`: the specified file cannot be opened, and
+    ///  * `FileExists`: the file exists and `overwrite` is `false`.
+    pub fn file(lib: Rc<AO>, driver: Driver, format: &SampleFormat<S>,
+                     path: &Path, overwrite: bool/*,
+                     options: */) -> AoResult<Device<S>> {
+        let id = try!(driver.as_raw(lib.deref()));
+        let handle = format.with_native(|f| {
+            path.with_c_str(|filename| unsafe {
+                ffi::ao_open_file(id, filename, overwrite as c_int, f, ptr::null())
+            })
+        });
+
+        Device::<S>::init(lib, handle)
+    }
+
+    /// Inner helper to finish Device init given a FFI handle.
+    fn init(lib: Rc<AO>, handle: *ffi::ao_device) -> AoResult<Device<S>> {
+        let opt = unsafe {
+            handle.to_option()
+        };
+
+        match opt {
+            None => {
+                Err(AoError::from_errno())
+            }
+            Some(d) => Ok(Device {
+                id: d,
+                lib_instance: lib
+            })
+        }
+    }
+
     pub fn play(&self, samples: &[S]) {
         let slice = samples.repr();
         unsafe {
