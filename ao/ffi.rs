@@ -1,4 +1,4 @@
-use std::libc::{c_char, c_int, c_void};
+use libc::{c_char, c_int, c_void};
 
 pub static AO_ENODRIVER: int = 1;
 pub static AO_ENOTFILE: int = 2;
@@ -53,11 +53,11 @@ pub struct ao_option {
 pub type ao_device = c_void;
 
 pub struct ao_sample_format {
-    bits: c_int,
-    rate: c_int,
-    channels: c_int,
-    byte_format: c_int,
-    matrix: *c_char
+    pub bits: c_int,
+    pub rate: c_int,
+    pub channels: c_int,
+    pub byte_format: c_int,
+    pub matrix: *c_char
 }
 
 pub static AO_FMT_LITTLE: int = 1;

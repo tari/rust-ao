@@ -1,16 +1,21 @@
 #![crate_id = "ao#0.1"]
 #![desc = "libao bindings"]
 #![license = "BSD"]
-#![crate_type = "dylib"]
+#![crate_type = "lib"]
 
-extern crate sync;
+#![feature(macro_rules)]
 
-use std::libc::c_int;
+extern crate libc;
+extern crate rand;
+
+use libc::c_int;
 use std::intrinsics::size_of;
 use std::os;
 use std::ptr;
 use std::rc::Rc;
 use std::raw::Repr;
+
+pub mod pipeline;
 
 #[allow(non_camel_case_types, dead_code)]
 mod ffi;
@@ -53,23 +58,39 @@ impl AoError {
 /// All types that implement `Sample` should be raw enough to permit output
 /// without additional processing. Conspicuously missing from the default impls
 /// is a 24-bit type, simply because there isn't a Rust-native 24-bit type.
-pub trait Sample { }
-impl Sample for i8 { }
-impl Sample for i16 { }
-impl Sample for i32 { }
+pub trait Sample: Num + NumCast {
+    fn max() -> Self;
+    fn min() -> Self;
+}
+
+macro_rules! sample_impl(
+    ($t:ty, $min:expr .. $max:expr) => (
+        impl Sample for $t {
+            fn max() -> $t { $min }
+            fn min() -> $t { $max }
+        }
+    );
+    ($t:ty) => (
+        sample_impl!($t, ::std::num::Bounded::min_value() .. ::std::num::Bounded::max_value())
+    )
+)
+
+sample_impl!(i8)
+sample_impl!(i16)
+sample_impl!(i32)
+sample_impl!(f32, -1.0 .. 1.0)
+sample_impl!(f64, -1.0 .. 1.0)
 
 /// Describes audio sample formats.
 ///
 /// Used to specify the format which data will be fed to a Device
 pub struct SampleFormat<S> {
-    /// Bits per sample
-    //sample_bits: uint,
     /// Samples per second (per channel)
-    sample_rate: uint,
+    pub sample_rate: uint,
     /// Number of channels
-    channels: uint,
-    /// Byte order of samples. Ignored if `sample_bits = 8`
-    byte_order: Endianness,
+    pub channels: uint,
+    /// Byte order of samples.
+    pub byte_order: Endianness,
     /// Maps input channels to output locations in a comma-separated list.
     ///
     /// For example, "L,R" specifies channel 0 as left and 1 as right, or
@@ -77,10 +98,10 @@ pub struct SampleFormat<S> {
     ///
     /// Refer to the [`matrix` documentation](https://www.xiph.org/ao/doc/ao_sample_format.html)
     /// for additional information and examples.
-    matrix: Option<~str>
+    pub matrix: Option<~str>
 }
 
-impl<S: Sample> SampleFormat<S> {
+impl<S: Int> SampleFormat<S> {
     fn with_native<T>(&self, f: |*ffi::ao_sample_format| -> T) -> T {
         let sample_size = unsafe {
             size_of::<S>() * 8
@@ -226,11 +247,11 @@ impl Driver {
 }
 
 pub struct Device<S> {
-    priv id: *ffi::ao_device,
-    priv lib_instance: Rc<AO>
+    id: *ffi::ao_device,
+    lib_instance: Rc<AO>
 }
 
-impl<S: Sample> Device<S> {
+impl<S: Int> Device<S> {
     pub fn live(lib: Rc<AO>, driver: Driver, format: &SampleFormat<S>/*,
                        options: */) -> AoResult<Device<S>> {
         let id = try!(driver.as_raw(lib.deref()));
