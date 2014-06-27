@@ -3,7 +3,7 @@
 #![license = "BSD"]
 #![crate_type = "lib"]
 
-#![feature(macro_rules)]
+#![feature(macro_rules,unsafe_destructor)]
 
 extern crate libc;
 extern crate rand;
@@ -15,14 +15,14 @@ use std::ptr;
 use std::rc::Rc;
 use std::raw::Repr;
 
-pub mod pipeline;
+//pub mod pipeline;
 
 #[allow(non_camel_case_types, dead_code)]
 mod ffi;
 
 pub type AoResult<T> = Result<T, AoError>;
 
-#[deriving(Eq, Show)]
+#[deriving(PartialEq, Eq, Show)]
 pub enum AoError {
     /// No driver is available. This means either:
     ///  * There is no driver matching the requested name
@@ -98,7 +98,7 @@ pub struct SampleFormat<S> {
     ///
     /// Refer to the [`matrix` documentation](https://www.xiph.org/ao/doc/ao_sample_format.html)
     /// for additional information and examples.
-    pub matrix: Option<~str>
+    pub matrix: Option<String>
 }
 
 impl<S: Int> SampleFormat<S> {
@@ -202,7 +202,7 @@ impl Drop for AO {
 
 pub enum Driver {
     DriverID(c_int),
-    DriverName(~str)
+    DriverName(String)
 }
 
 pub enum DriverType {
@@ -213,7 +213,7 @@ pub enum DriverType {
 #[deriving(Show)]
 pub struct DriverInfo {
     //flavor: DriverType,
-    name: ~str,
+    name: String,
     //short_name: CString,
     //comment: CString,
 }
@@ -234,10 +234,11 @@ impl Driver {
         }
     }*/
 
+    /// Get the raw (libao internal) driver ID corresponding to this Driver.
     fn as_raw(&self, lib: &AO) -> AoResult<c_int> {
         match *self {
             DriverID(id) => Ok(id),
-            DriverName(ref s) => match lib.get_driver(*s) {
+            DriverName(ref s) => match lib.get_driver(s.as_slice()) {
                 None => Err(NoDriver),
                 Some(DriverID(id)) => Ok(id),
                 Some(DriverName(_)) => unreachable!()
@@ -246,15 +247,15 @@ impl Driver {
     }
 }
 
-pub struct Device<S> {
+pub struct Device<'a, S> {
     id: *ffi::ao_device,
-    lib_instance: Rc<AO>
+    //lib_instance: &'a AO
 }
 
-impl<S: Int> Device<S> {
-    pub fn live(lib: Rc<AO>, driver: Driver, format: &SampleFormat<S>/*,
-                       options: */) -> AoResult<Device<S>> {
-        let id = try!(driver.as_raw(lib.deref()));
+impl<'a, S: Int> Device<'a, S> {
+    pub fn live(lib: &'a AO, driver: Driver, format: &SampleFormat<S>/*,
+                       options: */) -> AoResult<Device<'a, S>> {
+        let id = try!(driver.as_raw(lib));
 
         let handle = format.with_native(|f| unsafe {
             ffi::ao_open_live(id, f, ptr::null())
@@ -274,10 +275,10 @@ impl<S: Int> Device<S> {
     ///
     ///  * `OpenFile`: the specified file cannot be opened, and
     ///  * `FileExists`: the file exists and `overwrite` is `false`.
-    pub fn file(lib: Rc<AO>, driver: Driver, format: &SampleFormat<S>,
+    pub fn file(lib: &'a AO, driver: Driver, format: &SampleFormat<S>,
                      path: &Path, overwrite: bool/*,
-                     options: */) -> AoResult<Device<S>> {
-        let id = try!(driver.as_raw(lib.deref()));
+                     options: */) -> AoResult<Device<'a, S>> {
+        let id = try!(driver.as_raw(lib));
         let handle = format.with_native(|f| {
             path.with_c_str(|filename| unsafe {
                 ffi::ao_open_file(id, filename, overwrite as c_int, f, ptr::null())
@@ -288,7 +289,8 @@ impl<S: Int> Device<S> {
     }
 
     /// Inner helper to finish Device init given a FFI handle.
-    fn init(lib: Rc<AO>, handle: *ffi::ao_device) -> AoResult<Device<S>> {
+    #[allow(unused_variable)]
+    fn init(lib: &'a AO, handle: *ffi::ao_device) -> AoResult<Device<'a, S>> {
         let opt = unsafe {
             handle.to_option()
         };
@@ -299,7 +301,7 @@ impl<S: Int> Device<S> {
             }
             Some(d) => Ok(Device {
                 id: d,
-                lib_instance: lib
+                //lib_instance: lib
             })
         }
     }
@@ -314,7 +316,7 @@ impl<S: Int> Device<S> {
 }
 
 #[unsafe_destructor]
-impl<S> Drop for Device<S> {
+impl<'a, S> Drop for Device<'a, S> {
     fn drop(&mut self) {
         unsafe {
             ffi::ao_close(self.id);
