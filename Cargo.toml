@@ -1,0 +1,10 @@
+
+[package]
+
+name = "rust-ao"
+version = "0.1.0"
+authors = [ "peter@taricorp.net" ]
+
+[[lib]]
+name = "ao"
+path = "src/lib.rs"
