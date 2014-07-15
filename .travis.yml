@@ -1,3 +1,6 @@
+env:
+  global:
+      - secure: hhaRYVg9OnHrtyJ17RG2WZggo5TZqhULoBtl1uRU58tccT0syKn88AHMu0yi4LkFgqrtJ1QzStfRzfsSQNMBbh90ctZVPGzk1450H1YtsCJngLiAWp7JS/g+18p1QaOyMGTr5YzpkNxpypk4+83b0UJLlkbFJIvRhD3AOuN7A9A=
 before_install:
   - sudo add-apt-repository --yes ppa:hansjorg/rust
   - sudo add-apt-repository --yes ppa:cmrx64/cargo
@@ -6,3 +9,6 @@ install:
   - sudo apt-get install -qq rust-nightly cargo
 script:
   - cargo build
+  - rustdoc src/lib.rs
+after_script:
+  - curl http://www.rust-ci.org/artifacts/put?t=$RUSTCI_TOKEN | sh
