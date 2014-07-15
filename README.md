@@ -1,6 +1,8 @@
 # Rust-AO
 libao[libao] bindings for Rust.
 
+[libao]: https://www.xiph.org/ao/
+
 # Usage
 
 Build with `cargo`:
