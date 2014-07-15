@@ -5,6 +5,34 @@
 
 #![feature(macro_rules,unsafe_destructor)]
 
+//! Bindings to libao, a low-level library for audio output.
+//!
+//! ```
+//! use ao::{AO, SampleFormat, Native, Device, DriverName};
+//! use std::num::FloatMath;
+//!
+//! let lib = AO::init();
+//! let format: SampleFormat<i16> = SampleFormat {
+//!     sample_rate: 44100,
+//!     channels: 1,
+//!     byte_order: Native,
+//!     matrix: None
+//! };
+//! let device = Device::file(&lib, DriverName("wav"), &format,
+//!                           &Path::new("out.wav"), false);
+//! match device {
+//!     Ok(d) => {
+//!         let samples = Vec::<i16>::from_fn(44100, |i| {
+//!             ((1.0 / 44100.0 / 440.0 * i as f32).sin() * 32767.0) as i16
+//!         });
+//!         d.play(samples.as_slice());
+//!     }
+//!     Err(e) => {
+//!         println!("Failed to open output file: {}", e);
+//!     }
+//! }
+//! ```
+
 extern crate libc;
 extern crate rand;
 
@@ -12,8 +40,7 @@ use libc::c_int;
 use std::intrinsics::size_of;
 use std::os;
 use std::ptr;
-use std::rc::Rc;
-use std::raw::Repr;
+
 
 //pub mod pipeline;
 
@@ -102,7 +129,7 @@ pub struct SampleFormat<S> {
 }
 
 impl<S: Int> SampleFormat<S> {
-    fn with_native<T>(&self, f: |*ffi::ao_sample_format| -> T) -> T {
+    fn with_native<T>(&self, f: |*const ffi::ao_sample_format| -> T) -> T {
         let sample_size = unsafe {
             size_of::<S>() * 8
         };
@@ -138,7 +165,7 @@ pub enum Endianness {
     Native = ffi::AO_FMT_NATIVE
 }
 
-/// The master of all things libao.
+/// Tracks library initialization.
 pub struct AO;
 
 impl AO {
@@ -147,11 +174,11 @@ impl AO {
     ///
     /// This function must be called only once before a corresponding `shutdown`,
     /// and must be called from the main thread of an application.
-    pub fn init() -> Rc<AO> {
+    pub fn init() -> AO {
         unsafe {
             ffi::ao_initialize();
         };
-        Rc::new(AO)
+        AO
     }
 
     /// Gets the specified output driver or default.
@@ -161,16 +188,11 @@ impl AO {
     ///
     /// Returns `None` if the driver is not available.
     ///
-    /// # Drivers
-    ///
-    /// See the [libao docs](https://www.xiph.org/ao/doc/drivers.html) for
-    /// the drivers provided by default. Note that this is not an exhaustive
-    /// list, as user plugins may provide additional drivers.
     ///
     /// The default driver may be user-specified, or it will be automatically
     /// chosen to be a live output supported by the current platform. This
     /// implies that the default driver will not necessarily be a live output.
-    pub fn get_driver(&self, name: &str) -> Option<Driver> {
+    pub fn get_driver(&self, name: &str) -> Option<Driver<&str>> {
         let id = if name != "" {
             name.with_c_str(|name| unsafe {
                 ffi::ao_driver_id(name)
@@ -200,9 +222,16 @@ impl Drop for AO {
     }
 }
 
-pub enum Driver {
+/// An output driver.
+pub enum Driver<S> {
+    /// Specified by internal ID.
     DriverID(c_int),
-    DriverName(String)
+    /// Specified by name.
+    /// 
+    /// See the [libao docs](https://www.xiph.org/ao/doc/drivers.html) for
+    /// the drivers provided by default. Note that this is not an exhaustive
+    /// list, as user plugins may provide additional drivers.
+    DriverName(S)
 }
 
 pub enum DriverType {
@@ -218,7 +247,7 @@ pub struct DriverInfo {
     //comment: CString,
 }
 
-impl Driver {
+impl<S: Str> Driver<S> {
     /*
     pub fn get_info(&self) -> Option<DriverInfo> {
         let &Driver(id) = self;
@@ -248,12 +277,12 @@ impl Driver {
 }
 
 pub struct Device<'a, S> {
-    id: *ffi::ao_device,
+    id: *mut ffi::ao_device,
     //lib_instance: &'a AO
 }
 
 impl<'a, S: Int> Device<'a, S> {
-    pub fn live(lib: &'a AO, driver: Driver, format: &SampleFormat<S>/*,
+    pub fn live<T: Str>(lib: &'a AO, driver: Driver<T>, format: &SampleFormat<S>/*,
                        options: */) -> AoResult<Device<'a, S>> {
         let id = try!(driver.as_raw(lib));
 
@@ -275,7 +304,7 @@ impl<'a, S: Int> Device<'a, S> {
     ///
     ///  * `OpenFile`: the specified file cannot be opened, and
     ///  * `FileExists`: the file exists and `overwrite` is `false`.
-    pub fn file(lib: &'a AO, driver: Driver, format: &SampleFormat<S>,
+    pub fn file<T: Str>(lib: &'a AO, driver: Driver<T>, format: &SampleFormat<S>,
                      path: &Path, overwrite: bool/*,
                      options: */) -> AoResult<Device<'a, S>> {
         let id = try!(driver.as_raw(lib));
@@ -290,27 +319,21 @@ impl<'a, S: Int> Device<'a, S> {
 
     /// Inner helper to finish Device init given a FFI handle.
     #[allow(unused_variable)]
-    fn init(lib: &'a AO, handle: *ffi::ao_device) -> AoResult<Device<'a, S>> {
-        let opt = unsafe {
-            handle.to_option()
-        };
-
-        match opt {
-            None => {
-                Err(AoError::from_errno())
-            }
-            Some(d) => Ok(Device {
-                id: d,
+    fn init(lib: &'a AO, handle: *mut ffi::ao_device) -> AoResult<Device<'a, S>> {
+        if handle.is_null() {
+            Err(AoError::from_errno())
+        } else {
+            Ok(Device {
+                id: handle,
                 //lib_instance: lib
             })
         }
     }
 
     pub fn play(&self, samples: &[S]) {
-        let slice = samples.repr();
         unsafe {
-            let len = slice.len * size_of::<S>();
-            ffi::ao_play(self.id, slice.data as *i8, len as u32);
+            let len = samples.len() * size_of::<S>();
+            ffi::ao_play(self.id, samples.as_ptr() as *const i8, len as u32);
         }
     }
 }
