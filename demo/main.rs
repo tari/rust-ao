@@ -9,18 +9,22 @@ extern crate rand;
 use ao::AO;
 use ao::pipeline::{Source, Convert, WhiteNoise};
 
-struct DeviceSink<F, S> {
+struct AODeviceSink<F, S> {
     src: S,
     dev: ao::Device<F>
 }
 
 // libao doesn't do float output; just integer samples
-impl<F: Int, S: Source<F>> DeviceSink<F, S> {
-    fn new(dev: ao::Device<F>, src: S) -> DeviceSink<F, S> {
+impl<F: Int, S: Source<F>> AODeviceSink<F, S> {
+    fn new(dev: ao::Device<F>, src: S) -> AODeviceSink<F, S> {
         DeviceSink {
             src: src,
             dev: dev
         }
+    }
+
+    fn new_wav(src: S) -> AODeviceSink<F, S> {
+        
     }
 
     fn run(&mut self, samples: uint) -> uint {
@@ -43,7 +47,6 @@ impl<F: Int, S: Source<F>> DeviceSink<F, S> {
         done
     }
 }
-
 
 fn main() {
     let args = ::std::os::args();
