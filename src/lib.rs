@@ -37,6 +37,8 @@ extern crate libc;
 extern crate rand;
 
 use libc::c_int;
+use std::c_str::CString;
+use std::fmt;
 use std::intrinsics::size_of;
 use std::os;
 use std::ptr;
@@ -234,34 +236,53 @@ pub enum Driver<S> {
     DriverName(S)
 }
 
+#[deriving(Show)]
 pub enum DriverType {
     Live,
     File
 }
 
-#[deriving(Show)]
+impl DriverType {
+    fn from_c_int(n: c_int) -> DriverType {
+        match n {
+            ffi::AO_TYPE_FILE => File,
+            ffi::AO_TYPE_LIVE => Live,
+            n => fail!("Invalid AO_TYPE_*: {}", n)
+        }
+    }
+}
+
 pub struct DriverInfo {
-    //flavor: DriverType,
-    name: String,
-    //short_name: CString,
-    //comment: CString,
+    pub flavor: DriverType,
+    pub name: CString,
+    pub short_name: CString,
+    pub comment: CString,
+}
+
+impl fmt::Show for DriverInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<{} \"{}\", {}>",
+               self.name.as_str(),
+               self.short_name.as_str(),
+               self.flavor)
+    }
 }
 
 impl<S: Str> Driver<S> {
-    /*
-    pub fn get_info(&self) -> Option<DriverInfo> {
-        let &Driver(id) = self;
+    pub fn get_info(&self, lib: &AO) -> Option<DriverInfo> {
+        let id = self.as_raw(lib).unwrap();
+
         unsafe {
             ffi::ao_driver_info(id).to_option().map(|info| {
-                let name = CString::new(info.name, false).as_str().unwrap().into_owned();
                 DriverInfo {
-                    name: name
-//                    short_name: CString::new(info.short_name, false),
-//                    comment: CString::new(info.comment, false)
+                    name: CString::new(info.name, false),
+                    short_name: CString::new(info.short_name, false),
+                    comment: CString::new(info.comment, false),
+                    flavor: DriverType::from_c_int(info.flavor),
                 }
             })
         }
-    }*/
+    }
 
     /// Get the raw (libao internal) driver ID corresponding to this Driver.
     fn as_raw(&self, lib: &AO) -> AoResult<c_int> {

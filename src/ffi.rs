@@ -41,15 +41,18 @@ extern "C" {
 }
 
 pub struct ao_info {
-    flavor: c_int,
-    name: *mut c_char,
-    short_name: *mut c_char,
-    comment: *mut c_char,
-    preferred_byte_format: c_int,
-    priority: c_int,
-    options: *mut *mut c_char,
-    option_count: c_int,
+    pub flavor: c_int,
+    pub name: *const c_char,
+    pub short_name: *const c_char,
+    pub comment: *const c_char,
+    pub preferred_byte_format: c_int,
+    pub priority: c_int,
+    pub options: *const *const c_char,
+    pub option_count: c_int,
 }
+
+pub static AO_TYPE_LIVE: c_int = 1;
+pub static AO_TYPE_FILE: c_int = 2;
 
 pub struct ao_option {
     key: *mut c_char,
