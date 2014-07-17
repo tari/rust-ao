@@ -1,4 +1,5 @@
-#![crate_id = "ao#0.2"]
+#![crate_id = "ao"]
+#![doc(html_root_url = "http://www.rust-ci.org/tari/rust-ao/doc/ao/")]
 #![desc = "libao bindings"]
 #![license = "BSD"]
 #![crate_type = "lib"]
