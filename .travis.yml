@@ -11,5 +11,6 @@ script:
   - cargo build
   - cargo test
   - rustdoc --test -L target/ src/lib.rs
+  - rustdoc src/lib.rs
 after_script:
   - curl http://www.rust-ci.org/artifacts/put?t=$RUSTCI_TOKEN | sh
