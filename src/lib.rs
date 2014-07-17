@@ -1,8 +1,8 @@
-#![crate_id = "ao#0.1"]
 #![desc = "libao bindings"]
 #![license = "BSD"]
 #![crate_type = "lib"]
 
+#![deny(dead_code)]
 #![feature(macro_rules,unsafe_destructor)]
 
 //! Bindings to libao, a low-level library for audio output.
@@ -41,29 +41,44 @@ use std::c_str::CString;
 use std::fmt;
 use std::intrinsics::size_of;
 use std::os;
+use std::sync::atomics::{AtomicBool, Release, AcqRel, INIT_ATOMIC_BOOL};
 use std::ptr;
 
-
-//pub mod pipeline;
 
 #[allow(non_camel_case_types, dead_code)]
 mod ffi;
 
+/// Output for libao functions that may fail.
 pub type AoResult<T> = Result<T, AoError>;
 
 #[deriving(PartialEq, Eq, Show)]
+/// Result of (most) operations that may fail.
 pub enum AoError {
-    /// No driver is available. This means either:
+    /// No driver is available.
+    ///
+    /// This means either:
     ///  * There is no driver matching the requested name
     ///  * There are no usable audio output devices
     NoDriver = ffi::AO_ENODRIVER,
+    /// The specified driver does not do file output.
     NotFile = ffi::AO_ENOTFILE,
+    /// The specified driver does not do live output.
     NotLive = ffi::AO_ENOTLIVE,
+    /// A known driver option has an invalid value.
     BadOption = ffi::AO_EBADOPTION,
+    /// Could not open the output device.
+    ///
+    /// For example, if `/dev/dsp` could not be opened with the OSS driver.
     OpenDevice = ffi::AO_EOPENDEVICE,
+    /// Could not open the output file.
     OpenFile = ffi::AO_EOPENFILE,
+    /// The specified file already exists.
     FileExists = ffi::AO_EFILEEXISTS,
+    /// The requested stream format is not supported.
+    ///
+    /// This is usually the result of an invalid channel matrix.
     BadFormat = ffi::AO_EBADFORMAT,
+    /// Unspecified error.
     Unknown = ffi::AO_EFAIL
 }
 
@@ -88,7 +103,9 @@ impl AoError {
 /// without additional processing. Conspicuously missing from the default impls
 /// is a 24-bit type, simply because there isn't a Rust-native 24-bit type.
 pub trait Sample: Num + NumCast {
+    /// Maximum permitted value.
     fn max() -> Self;
+    /// Minimum permitted value.
     fn min() -> Self;
 }
 
@@ -130,7 +147,7 @@ pub struct SampleFormat<S> {
     pub matrix: Option<String>
 }
 
-impl<S: Int> SampleFormat<S> {
+impl<S: Sample> SampleFormat<S> {
     fn with_native<T>(&self, f: |*const ffi::ao_sample_format| -> T) -> T {
         let sample_size = unsafe {
             size_of::<S>() * 8
@@ -157,7 +174,7 @@ impl<S: Int> SampleFormat<S> {
     }
 }
 
-/// Machine byte order.
+/// Sample byte ordering.
 pub enum Endianness {
     /// Least-significant byte first
     Little = ffi::AO_FMT_LITTLE,
@@ -167,17 +184,25 @@ pub enum Endianness {
     Native = ffi::AO_FMT_NATIVE
 }
 
-/// Tracks library initialization.
+/// Library owner.
+///
+/// Initialization of this object loads plugins and system/user configuration
+/// files. There must be only one instance of this object live at a given time.
+///
+/// Behind the scenes, this object controls initialization of libao. It should
+/// be created only from the main thread of your application, due to bugs in
+/// some output drivers that can cause segfaults on thread exit.
 pub struct AO;
 
+static mut FFI_INITIALIZED: AtomicBool = INIT_ATOMIC_BOOL;
+
 impl AO {
-    /// Initializes libao internals, including loading plugins and reading
-    /// configuration files.
-    ///
-    /// This function must be called only once before a corresponding `shutdown`,
-    /// and must be called from the main thread of an application.
+    /// Get the `AO`
     pub fn init() -> AO {
         unsafe {
+            if FFI_INITIALIZED.compare_and_swap(false, true, AcqRel) {
+                fail!("Attempted multiple instantiation of ao::AO")
+            }
             ffi::ao_initialize();
         };
         AO
@@ -190,10 +215,10 @@ impl AO {
     ///
     /// Returns `None` if the driver is not available.
     ///
-    ///
-    /// The default driver may be user-specified, or it will be automatically
-    /// chosen to be a live output supported by the current platform. This
-    /// implies that the default driver will not necessarily be a live output.
+    /// The default driver may be specified by the user or system
+    /// configuration, otherwise it will be automatically chosen to be a live
+    /// output supported by the current platform. This implies that the default
+    /// driver will not necessarily be a live output.
     pub fn get_driver(&self, name: &str) -> Option<Driver<&str>> {
         let id = if name != "" {
             name.with_c_str(|name| unsafe {
@@ -211,8 +236,6 @@ impl AO {
             Some(DriverID(id))
         }
     }
-
-
 }
 
 #[unsafe_destructor]
@@ -220,25 +243,32 @@ impl Drop for AO {
     fn drop(&mut self) {
         unsafe {
             ffi::ao_shutdown();
+            FFI_INITIALIZED.store(false, Release);
         }
     }
 }
 
 /// An output driver.
 pub enum Driver<S> {
-    /// Specified by internal ID.
+    /// Driver specified by internal ID.
+    ///
+    /// You should almost never instantiate this variant directly. The values
+    /// are opaque and may vary between systems.
     DriverID(c_int),
-    /// Specified by name.
+    /// Driver specified by name.
     /// 
-    /// See the [libao docs](https://www.xiph.org/ao/doc/drivers.html) for
-    /// the drivers provided by default. Note that this is not an exhaustive
-    /// list, as user plugins may provide additional drivers.
+    /// See the [libao docs](https://www.xiph.org/ao/doc/drivers.html) for a
+    /// list of drivers provided by default. Note that this is not an
+    /// exhaustive list, as user plugins may provide additional drivers.
     DriverName(S)
 }
 
+/// The output type of a driver.
 #[deriving(Show)]
 pub enum DriverType {
+    /// Live playback, such as a local sound card.
     Live,
+    /// File output, such as to a `wav` file on disk.
     File
 }
 
@@ -252,11 +282,19 @@ impl DriverType {
     }
 }
 
+/// Properties and metadata for a driver.
 pub struct DriverInfo {
     pub flavor: DriverType,
+    /// Full name of driver.
+    /// 
+    /// May contain any single line of text.
     pub name: CString,
+    /// Short name of driver.
+    /// 
+    /// This is the driver name used to refer to the driver when performing
+    /// lookups. It contains only alphanumeric characters, and no whitespace.
     pub short_name: CString,
-    pub comment: CString,
+    pub comment: Option<CString>,
 }
 
 impl fmt::Show for DriverInfo {
@@ -269,15 +307,23 @@ impl fmt::Show for DriverInfo {
 }
 
 impl<S: Str> Driver<S> {
+    /// Get the `DriverInfo` corresponding to this `Driver`.
     pub fn get_info(&self, lib: &AO) -> Option<DriverInfo> {
-        let id = self.as_raw(lib).unwrap();
+        let id = match self.as_raw(lib) {
+            Err(_) => return None,
+            Ok(id) => id
+        };
 
         unsafe {
             ffi::ao_driver_info(id).to_option().map(|info| {
                 DriverInfo {
                     name: CString::new(info.name, false),
                     short_name: CString::new(info.short_name, false),
-                    comment: CString::new(info.comment, false),
+                    comment: if info.comment.is_null() {
+                        None
+                    } else {
+                        Some(CString::new(info.comment, false))
+                    },
                     flavor: DriverType::from_c_int(info.flavor),
                 }
             })
@@ -297,12 +343,16 @@ impl<S: Str> Driver<S> {
     }
 }
 
+/// An output device.
 pub struct Device<'a, S> {
     id: *mut ffi::ao_device,
-    //lib_instance: &'a AO
 }
 
-impl<'a, S: Int> Device<'a, S> {
+impl<'a, S: Sample> Device<'a, S> {
+    /// Opens a live output device.
+    ///
+    /// Returns `NotLive` if the specified driver is not a live output driver.
+    /// In this case, open the device as a file output instead.
     pub fn live<T: Str>(lib: &'a AO, driver: Driver<T>, format: &SampleFormat<S>/*,
                        options: */) -> AoResult<Device<'a, S>> {
         let id = try!(driver.as_raw(lib));
@@ -314,17 +364,12 @@ impl<'a, S: Int> Device<'a, S> {
         Device::<S>::init(lib, handle)
     }
 
-    /// Opens a file for audio output.
+    /// Opens a file output device.
     ///
     /// `path` specifies the file to write to, and `overwrite` will
     /// automatically replace any existing file if `true`.
     ///
-    /// # Errors
-    ///
-    /// Returns similar errors to `open`, with several additions:
-    ///
-    ///  * `OpenFile`: the specified file cannot be opened, and
-    ///  * `FileExists`: the file exists and `overwrite` is `false`.
+    /// Returns `NotFile` if the requested driver is not a file output driver.
     pub fn file<T: Str>(lib: &'a AO, driver: Driver<T>, format: &SampleFormat<S>,
                      path: &Path, overwrite: bool/*,
                      options: */) -> AoResult<Device<'a, S>> {
@@ -339,18 +384,30 @@ impl<'a, S: Int> Device<'a, S> {
     }
 
     /// Inner helper to finish Device init given a FFI handle.
-    #[allow(unused_variable)]
     fn init(lib: &'a AO, handle: *mut ffi::ao_device) -> AoResult<Device<'a, S>> {
         if handle.is_null() {
             Err(AoError::from_errno())
         } else {
             Ok(Device {
                 id: handle,
-                //lib_instance: lib
             })
         }
     }
 
+    /// Plays packed samples through a device.
+    ///
+    /// For multi-channel output, channels are interleaved, such that positions
+    /// in the `samples` slice for four ouput channels would be as so:
+    ///
+    /// ````
+    /// [c1, c2, c3, c4,    <-- time 1
+    ///  c1, c2, c3, c4]    <-- time 2
+    /// ````
+    /// 
+    /// In most cases this layout can be achieved as either an array
+    /// or tuple. Again with 4 channels:
+    ///
+    ///     my_device.play(&[[0, 0, 0, 0], [0, 0, 0, 0]]);
     pub fn play(&self, samples: &[S]) {
         unsafe {
             let len = samples.len() * size_of::<S>();
