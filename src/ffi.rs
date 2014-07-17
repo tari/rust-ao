@@ -40,6 +40,7 @@ extern "C" {
                    num_bytes: u32) -> c_int;
 }
 
+#[repr(C)]
 pub struct ao_info {
     pub flavor: c_int,
     pub name: *const c_char,
@@ -54,6 +55,7 @@ pub struct ao_info {
 pub static AO_TYPE_LIVE: c_int = 1;
 pub static AO_TYPE_FILE: c_int = 2;
 
+#[repr(C)]
 pub struct ao_option {
     key: *mut c_char,
     value: *mut c_char,
@@ -63,6 +65,7 @@ pub struct ao_option {
 // Opaque struct
 pub type ao_device = c_void;
 
+#[repr(C)]
 pub struct ao_sample_format {
     pub bits: c_int,
     pub rate: c_int,
