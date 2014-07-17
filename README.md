@@ -13,6 +13,13 @@ Build documentation with `rustdoc`, rooted at `doc/ao/index.html`:
 
     rustdoc src/lib.rs
 
+Run tests. Tests must not be run in parallel because libao may only be
+instantiated once in a given _process_. Running tests concurrently
+can cause race conditions on library initialization, causing spurious
+test failure:
+
+    REST_TEST_TASKS=1 cargo test
+
 Write programs:
 
     extern crate ao;
