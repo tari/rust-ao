@@ -1,3 +1,4 @@
+#![crate_id = "ao#0.2"]
 #![desc = "libao bindings"]
 #![license = "BSD"]
 #![crate_type = "lib"]
@@ -34,16 +35,15 @@
 //! ```
 
 extern crate libc;
-extern crate rand;
 
 use libc::c_int;
 use std::c_str::CString;
 use std::fmt;
 use std::intrinsics::size_of;
+use std::kinds::marker::ContravariantLifetime;
 use std::os;
 use std::sync::atomics::{AtomicBool, Release, AcqRel, INIT_ATOMIC_BOOL};
 use std::ptr;
-
 
 #[allow(non_camel_case_types, dead_code)]
 mod ffi;
@@ -219,7 +219,7 @@ impl AO {
     /// configuration, otherwise it will be automatically chosen to be a live
     /// output supported by the current platform. This implies that the default
     /// driver will not necessarily be a live output.
-    pub fn get_driver(&self, name: &str) -> Option<Driver<&str>> {
+    pub fn get_driver<'a>(&'a self, name: &str) -> Option<Driver<'a>> {
         let id = if name != "" {
             name.with_c_str(|name| unsafe {
                 ffi::ao_driver_id(name)
@@ -233,7 +233,10 @@ impl AO {
         if id == -1 {
             None
         } else {
-            Some(DriverID(id))
+            Some(Driver {
+                id: id,
+                marker: ContravariantLifetime::<'a>
+            })
         }
     }
 }
@@ -246,21 +249,6 @@ impl Drop for AO {
             FFI_INITIALIZED.store(false, Release);
         }
     }
-}
-
-/// An output driver.
-pub enum Driver<S> {
-    /// Driver specified by internal ID.
-    ///
-    /// You should almost never instantiate this variant directly. The values
-    /// are opaque and may vary between systems.
-    DriverID(c_int),
-    /// Driver specified by name.
-    /// 
-    /// See the [libao docs](https://www.xiph.org/ao/doc/drivers.html) for a
-    /// list of drivers provided by default. Note that this is not an
-    /// exhaustive list, as user plugins may provide additional drivers.
-    DriverName(S)
 }
 
 /// The output type of a driver.
@@ -306,13 +294,18 @@ impl fmt::Show for DriverInfo {
     }
 }
 
-impl<S: Str> Driver<S> {
+/// An output driver.
+///
+/// This is an opaque handle.
+pub struct Driver<'a> {
+    id: c_int,
+    marker: ContravariantLifetime<'a>,
+}
+
+impl<'a> Driver<'a> {
     /// Get the `DriverInfo` corresponding to this `Driver`.
-    pub fn get_info(&self, lib: &AO) -> Option<DriverInfo> {
-        let id = match self.as_raw(lib) {
-            Err(_) => return None,
-            Ok(id) => id
-        };
+    pub fn get_info(&self) -> Option<DriverInfo> {
+        let id = self.id;
 
         unsafe {
             ffi::ao_driver_info(id).to_option().map(|info| {
@@ -330,66 +323,55 @@ impl<S: Str> Driver<S> {
         }
     }
 
-    /// Get the raw (libao internal) driver ID corresponding to this Driver.
-    fn as_raw(&self, lib: &AO) -> AoResult<c_int> {
-        match *self {
-            DriverID(id) => Ok(id),
-            DriverName(ref s) => match lib.get_driver(s.as_slice()) {
-                None => Err(NoDriver),
-                Some(DriverID(id)) => Ok(id),
-                Some(DriverName(_)) => unreachable!()
-            }
-        }
+    /// Open a live output device.
+    ///
+    /// Returns `NotLive` if the specified driver is not a live output driver.
+    /// In this case, open the device as a file output instead.
+    pub fn open_live<S: Sample>(&self,
+                                format: &SampleFormat<S>) -> AoResult<Device<'a, S>> {
+        let handle = format.with_native(|f| unsafe {
+            ffi::ao_open_live(self.id, f, ptr::null())
+        });
+
+        Device::<'a, S>::init(handle)
+    }
+
+    /// Open a file output device.
+    ///
+    /// `path` specifies the file to write to, and `overwrite` will
+    /// automatically replace any existing file if `true`.
+    ///
+    /// Returns `NotFile` if the requested driver is not a file output driver.
+    pub fn open_file<S: Sample>(&self,
+                                format: &SampleFormat<S>,
+                                file: &Path,
+                                overwrite: bool) -> AoResult<Device<'a, S>> {
+        let handle = format.with_native(|f| {
+            file.with_c_str(|filename| unsafe {
+                ffi::ao_open_file(self.id, filename, overwrite as c_int, f, ptr::null())
+            })
+        });
+
+        Device::<'a, S>::init(handle)
     }
 }
 
 /// An output device.
 pub struct Device<'a, S> {
     id: *mut ffi::ao_device,
+    marker: ContravariantLifetime<'a>,
 }
 
 impl<'a, S: Sample> Device<'a, S> {
-    /// Opens a live output device.
-    ///
-    /// Returns `NotLive` if the specified driver is not a live output driver.
-    /// In this case, open the device as a file output instead.
-    pub fn live<T: Str>(lib: &'a AO, driver: Driver<T>, format: &SampleFormat<S>/*,
-                       options: */) -> AoResult<Device<'a, S>> {
-        let id = try!(driver.as_raw(lib));
-
-        let handle = format.with_native(|f| unsafe {
-            ffi::ao_open_live(id, f, ptr::null())
-        });
-
-        Device::<S>::init(lib, handle)
-    }
-
-    /// Opens a file output device.
-    ///
-    /// `path` specifies the file to write to, and `overwrite` will
-    /// automatically replace any existing file if `true`.
-    ///
-    /// Returns `NotFile` if the requested driver is not a file output driver.
-    pub fn file<T: Str>(lib: &'a AO, driver: Driver<T>, format: &SampleFormat<S>,
-                     path: &Path, overwrite: bool/*,
-                     options: */) -> AoResult<Device<'a, S>> {
-        let id = try!(driver.as_raw(lib));
-        let handle = format.with_native(|f| {
-            path.with_c_str(|filename| unsafe {
-                ffi::ao_open_file(id, filename, overwrite as c_int, f, ptr::null())
-            })
-        });
-
-        Device::<S>::init(lib, handle)
-    }
 
     /// Inner helper to finish Device init given a FFI handle.
-    fn init(lib: &'a AO, handle: *mut ffi::ao_device) -> AoResult<Device<'a, S>> {
+    fn init(handle: *mut ffi::ao_device) -> AoResult<Device<'a, S>> {
         if handle.is_null() {
             Err(AoError::from_errno())
         } else {
             Ok(Device {
                 id: handle,
+                marker: ContravariantLifetime,
             })
         }
     }
@@ -423,4 +405,46 @@ impl<'a, S> Drop for Device<'a, S> {
             ffi::ao_close(self.id);
         }
     }
+}
+
+// Driver<'a> must not be able to outlive the &'a AO that created it.
+// Unfortunately there's no #[compile_fail] for #[test] like
+// #[should_fail].
+/*
+#[test]
+fn test_driver_lifetime() {
+    let driver: Driver;
+    {
+        let lib = AO::init();
+        driver = lib.get_driver("").unwrap();
+    }
+    driver.get_info();
+}
+*/
+
+// Device<S> must not accept samples of any type other than S.
+/*
+#[test]
+fn test_sample_variance() {
+    let lib = AO::init();
+    let device = lib.get_driver("").unwrap().open_live::<i16>(&SampleFormat {
+        sample_rate: 44100,
+        channels: 1,
+        byte_order: Native,
+        matrix: None
+    }).unwrap();
+    // Invalid: does not match declared sample format
+    device.play(&[0i32]);
+    // OK
+    device.play(&[0i16]);
+}
+*/
+
+/// Task fails on multiple initialization.
+#[test]
+#[should_fail]
+#[allow(unused_variable)]
+fn test_multiple_instantiation() {
+    let lib = AO::init();
+    let lib2 = AO::init();
 }
