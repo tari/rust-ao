@@ -108,30 +108,12 @@ impl AoError {
 /// All types that implement `Sample` should be raw enough to permit output
 /// without additional processing. Conspicuously missing from the default impls
 /// is a 24-bit type, simply because there isn't a Rust-native 24-bit type.
-pub trait Sample: Num + NumCast {
-    /// Maximum permitted value.
-    fn max() -> Self;
-    /// Minimum permitted value.
-    fn min() -> Self;
-}
-
-macro_rules! sample_impl(
-    ($t:ty, $min:expr .. $max:expr) => (
-        impl Sample for $t {
-            fn max() -> $t { $min }
-            fn min() -> $t { $max }
-        }
-    );
-    ($t:ty) => (
-        sample_impl!($t, ::std::num::Bounded::min_value() .. ::std::num::Bounded::max_value())
-    )
-)
-
-sample_impl!(i8)
-sample_impl!(i16)
-sample_impl!(i32)
-sample_impl!(f32, -1.0 .. 1.0)
-sample_impl!(f64, -1.0 .. 1.0)
+pub trait Sample { }
+impl Sample for i8 { }
+impl Sample for i16 { }
+impl Sample for i32 { }
+impl Sample for f32 { }
+impl Sample for f64 { }
 
 /// Describes audio sample formats.
 ///
