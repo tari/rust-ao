@@ -8,28 +8,33 @@
 
 //! Bindings to libao, a low-level library for audio output.
 //!
-//! ```
-//! use ao::{AO, SampleFormat, Native, Device, DriverName};
+//! ```no_run
+//! use ao::{AO, SampleFormat, Native};
 //! use std::num::FloatMath;
 //!
-//! let lib = AO::init();
-//! let format: SampleFormat<i16> = SampleFormat {
-//!     sample_rate: 44100,
-//!     channels: 1,
-//!     byte_order: Native,
-//!     matrix: None
-//! };
-//! let device = Device::file(&lib, DriverName("wav"), &format,
-//!                           &Path::new("out.wav"), false);
-//! match device {
-//!     Ok(d) => {
-//!         let samples = Vec::<i16>::from_fn(44100, |i| {
-//!             ((1.0 / 44100.0 / 440.0 * i as f32).sin() * 32767.0) as i16
-//!         });
-//!         d.play(samples.as_slice());
-//!     }
-//!     Err(e) => {
-//!         println!("Failed to open output file: {}", e);
+//! fn main() {
+//!     let lib = AO::init();
+//!     let format: SampleFormat<i16> = SampleFormat {
+//!         sample_rate: 44100,
+//!         channels: 1,
+//!         byte_order: Native,
+//!         matrix: None
+//!     };
+//!     let driver = match lib.get_driver("wav") {
+//!         Some(d) => d,
+//!         None => fail!("No such driver: \"wav\"")
+//!     };
+//!     
+//!     match driver.open_file(&format, &Path::new("out.wav"), false) {
+//!         Ok(d) => {
+//!             let samples = Vec::<i16>::from_fn(44100, |i| {
+//!                 ((1.0 / 44100.0 / 440.0 * i as f32).sin() * 32767.0) as i16
+//!             });
+//!             d.play(samples.as_slice());
+//!         }
+//!         Err(e) => {
+//!             println!("Failed to open output file: {}", e);
+//!         }
 //!     }
 //! }
 //! ```
@@ -381,15 +386,17 @@ impl<'a, S: Sample> Device<'a, S> {
     /// For multi-channel output, channels are interleaved, such that positions
     /// in the `samples` slice for four ouput channels would be as so:
     ///
-    /// ````
+    /// ```ignore
     /// [c1, c2, c3, c4,    <-- time 1
     ///  c1, c2, c3, c4]    <-- time 2
-    /// ````
+    /// ```
     /// 
     /// In most cases this layout can be achieved as either an array
     /// or tuple. Again with 4 channels:
     ///
-    ///     my_device.play(&[[0, 0, 0, 0], [0, 0, 0, 0]]);
+    /// ```ignore
+    /// my_device.play(&[[0, 0, 0, 0], [0, 0, 0, 0]]);
+    /// ```
     pub fn play(&self, samples: &[S]) {
         unsafe {
             let len = samples.len() * size_of::<S>();
