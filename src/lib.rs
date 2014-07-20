@@ -1,4 +1,4 @@
-#![crate_id = "ao"]
+#![crate_name = "ao"]
 #![doc(html_root_url = "http://www.rust-ci.org/tari/rust-ao/doc/ao/")]
 #![desc = "libao bindings"]
 #![license = "BSD"]
@@ -65,32 +65,32 @@ pub enum AoError {
     /// This means either:
     ///  * There is no driver matching the requested name
     ///  * There are no usable audio output devices
-    NoDriver = ffi::AO_ENODRIVER,
+    NoDriver = ffi::AO_ENODRIVER as int,
     /// The specified driver does not do file output.
-    NotFile = ffi::AO_ENOTFILE,
+    NotFile = ffi::AO_ENOTFILE as int,
     /// The specified driver does not do live output.
-    NotLive = ffi::AO_ENOTLIVE,
+    NotLive = ffi::AO_ENOTLIVE as int,
     /// A known driver option has an invalid value.
-    BadOption = ffi::AO_EBADOPTION,
+    BadOption = ffi::AO_EBADOPTION as int,
     /// Could not open the output device.
     ///
     /// For example, if `/dev/dsp` could not be opened with the OSS driver.
-    OpenDevice = ffi::AO_EOPENDEVICE,
+    OpenDevice = ffi::AO_EOPENDEVICE as int,
     /// Could not open the output file.
-    OpenFile = ffi::AO_EOPENFILE,
+    OpenFile = ffi::AO_EOPENFILE as int,
     /// The specified file already exists.
-    FileExists = ffi::AO_EFILEEXISTS,
+    FileExists = ffi::AO_EFILEEXISTS as int,
     /// The requested stream format is not supported.
     ///
     /// This is usually the result of an invalid channel matrix.
-    BadFormat = ffi::AO_EBADFORMAT,
+    BadFormat = ffi::AO_EBADFORMAT as int,
     /// Unspecified error.
-    Unknown = ffi::AO_EFAIL
+    Unknown = ffi::AO_EFAIL as int,
 }
 
 impl AoError {
     fn from_errno() -> AoError {
-        match os::errno() {
+        match os::errno() as c_int {
             ffi::AO_ENODRIVER => NoDriver,
             ffi::AO_ENOTFILE => NotFile,
             ffi::AO_ENOTLIVE => NotLive,
@@ -165,11 +165,11 @@ impl<S: Sample> SampleFormat<S> {
 /// Sample byte ordering.
 pub enum Endianness {
     /// Least-significant byte first
-    Little = ffi::AO_FMT_LITTLE,
+    Little = ffi::AO_FMT_LITTLE as int,
     /// Most-significant byte first
-    Big = ffi::AO_FMT_BIG,
+    Big = ffi::AO_FMT_BIG as int,
     /// Machine's default byte order
-    Native = ffi::AO_FMT_NATIVE
+    Native = ffi::AO_FMT_NATIVE as int,
 }
 
 /// Library owner.
