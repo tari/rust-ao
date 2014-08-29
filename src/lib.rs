@@ -15,12 +15,7 @@
 //!
 //! fn main() {
 //!     let lib = AO::init();
-//!     let format: SampleFormat<i16> = SampleFormat {
-//!         sample_rate: 44100,
-//!         channels: 1,
-//!         byte_order: Native,
-//!         matrix: None
-//!     };
+//!     let format = SampleFormat::<i16, &'static str>::new(44100, 1, Native, None);
 //!     let driver = match lib.get_driver("wav") {
 //!         Some(d) => d,
 //!         None => fail!("No such driver: \"wav\"")
@@ -46,13 +41,14 @@ use libc::c_int;
 use std::c_str::CString;
 use std::fmt;
 use std::intrinsics::size_of;
-use std::kinds::marker::ContravariantLifetime;
+use std::kinds::marker::{ContravariantLifetime, InvariantType};
 use std::os;
 use std::sync::atomics::{AtomicBool, Release, AcqRel, INIT_ATOMIC_BOOL};
 use std::ptr;
 
 #[allow(non_camel_case_types, dead_code)]
 mod ffi;
+//mod auto;
 
 /// Output for libao functions that may fail.
 pub type AoResult<T> = Result<T, AoError>;
@@ -108,17 +104,31 @@ impl AoError {
 /// All types that implement `Sample` should be raw enough to permit output
 /// without additional processing. Conspicuously missing from the default impls
 /// is a 24-bit type, simply because there isn't a Rust-native 24-bit type.
-pub trait Sample { }
-impl Sample for i8 { }
-impl Sample for i16 { }
-impl Sample for i32 { }
-impl Sample for f32 { }
-impl Sample for f64 { }
+pub trait Sample {
+    fn channels(&self) -> uint;
+}
+
+macro_rules! sample_impl(
+    ($t:ty) => (
+        impl Sample for $t {
+            fn channels(&self) -> uint { 1 }
+        }
+    );
+    (channels $w:expr) => (
+        impl<S: Sample> Sample for [S, ..$w] {
+            fn channels(&self) -> uint { $w }
+        }
+    )
+)
+sample_impl!(i8)
+sample_impl!(i16)
+sample_impl!(i32)
+sample_impl!(channels 2)
 
 /// Describes audio sample formats.
 ///
 /// Used to specify the format which data will be fed to a Device
-pub struct SampleFormat<S> {
+pub struct SampleFormat<T, S> {
     /// Samples per second (per channel)
     pub sample_rate: uint,
     /// Number of channels
@@ -132,11 +142,23 @@ pub struct SampleFormat<S> {
     ///
     /// Refer to the [`matrix` documentation](https://www.xiph.org/ao/doc/ao_sample_format.html)
     /// for additional information and examples.
-    pub matrix: Option<String>
+    pub matrix: Option<S>,
+    marker: InvariantType<T>,
 }
 
-impl<S: Sample> SampleFormat<S> {
-    fn with_native<T>(&self, f: |*const ffi::ao_sample_format| -> T) -> T {
+impl<T: Sample, S: Str> SampleFormat<T, S> {
+    pub fn new(sample_rate: uint, channels: uint, byte_order: Endianness,
+               matrix: Option<S>) -> SampleFormat<T, S> {
+        SampleFormat {
+            sample_rate: sample_rate,
+            channels: channels,
+            byte_order: byte_order,
+            matrix: matrix,
+            marker: InvariantType
+        }
+    }
+
+    fn with_native<U>(&self, f: |*const ffi::ao_sample_format| -> U) -> U {
         let sample_size = unsafe {
             size_of::<S>() * 8
         };
@@ -154,7 +176,7 @@ impl<S: Sample> SampleFormat<S> {
 
         match self.matrix {
             None => f(&native),
-            Some(ref s) => s.with_c_str(|s| {
+            Some(ref s) => s.as_slice().with_c_str(|s| {
                 native.matrix = s;
                 f(&native)
             })
@@ -163,6 +185,7 @@ impl<S: Sample> SampleFormat<S> {
 }
 
 /// Sample byte ordering.
+#[deriving(PartialEq, Eq)]
 pub enum Endianness {
     /// Least-significant byte first
     Little = ffi::AO_FMT_LITTLE as int,
@@ -223,7 +246,7 @@ impl AO {
         } else {
             Some(Driver {
                 id: id,
-                marker: ContravariantLifetime::<'a>
+                marker: ContravariantLifetime
             })
         }
     }
@@ -315,13 +338,13 @@ impl<'a> Driver<'a> {
     ///
     /// Returns `NotLive` if the specified driver is not a live output driver.
     /// In this case, open the device as a file output instead.
-    pub fn open_live<S: Sample>(&self,
-                                format: &SampleFormat<S>) -> AoResult<Device<'a, S>> {
+    pub fn open_live<T: Sample, S: Str>(&self,
+            format: &SampleFormat<T, S>) -> AoResult<Device<'a, T>> {
         let handle = format.with_native(|f| unsafe {
             ffi::ao_open_live(self.id, f, ptr::null())
         });
 
-        Device::<'a, S>::init(handle)
+        Device::<'a, T>::init(handle)
     }
 
     /// Open a file output device.
@@ -330,24 +353,24 @@ impl<'a> Driver<'a> {
     /// automatically replace any existing file if `true`.
     ///
     /// Returns `NotFile` if the requested driver is not a file output driver.
-    pub fn open_file<S: Sample>(&self,
-                                format: &SampleFormat<S>,
-                                file: &Path,
-                                overwrite: bool) -> AoResult<Device<'a, S>> {
+    pub fn open_file<T: Sample, S: Str>(&self,
+            format: &SampleFormat<T, S>, file: &Path,
+            overwrite: bool) -> AoResult<Device<'a, T>> {
         let handle = format.with_native(|f| {
             file.with_c_str(|filename| unsafe {
                 ffi::ao_open_file(self.id, filename, overwrite as c_int, f, ptr::null())
             })
         });
 
-        Device::<'a, S>::init(handle)
+        Device::<'a, T>::init(handle)
     }
 }
 
 /// An output device.
 pub struct Device<'a, S> {
     id: *mut ffi::ao_device,
-    marker: ContravariantLifetime<'a>,
+    marker0: ContravariantLifetime<'a>,
+    marker1: InvariantType<S>,
 }
 
 impl<'a, S: Sample> Device<'a, S> {
@@ -359,7 +382,8 @@ impl<'a, S: Sample> Device<'a, S> {
         } else {
             Ok(Device {
                 id: handle,
-                marker: ContravariantLifetime,
+                marker0: ContravariantLifetime,
+                marker1: InvariantType,
             })
         }
     }
