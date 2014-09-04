@@ -104,7 +104,7 @@ impl AoError {
 /// All types that implement `Sample` should be raw enough to permit output
 /// without additional processing. Conspicuously missing from the default impls
 /// is a 24-bit type, simply because there isn't a Rust-native 24-bit type.
-pub trait Sample {
+pub trait Sample : Copy {
     fn channels(&self) -> uint;
 }
 
