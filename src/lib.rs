@@ -160,7 +160,7 @@ impl<T: Sample, S: Str> SampleFormat<T, S> {
 
     fn with_native<U>(&self, f: |*const ffi::ao_sample_format| -> U) -> U {
         let sample_size = unsafe {
-            size_of::<S>() * 8
+            size_of::<T>() * 8
         };
         // The caller of ao_open_* functions retains ownership of the ao_format
         // it passes in, but the native representation owns a raw C string.
