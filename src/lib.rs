@@ -48,7 +48,7 @@ use std::ptr;
 
 #[allow(non_camel_case_types, dead_code)]
 mod ffi;
-//mod auto;
+pub mod auto;
 
 /// Output for libao functions that may fail.
 pub type AoResult<T> = Result<T, AoError>;
@@ -319,7 +319,7 @@ impl<'a> Driver<'a> {
         let id = self.id;
 
         unsafe {
-            ffi::ao_driver_info(id).to_option().map(|info| {
+            ffi::ao_driver_info(id).as_ref().map(|info| {
                 DriverInfo {
                     name: CString::new(info.name, false),
                     short_name: CString::new(info.short_name, false),
