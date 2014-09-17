@@ -4,7 +4,7 @@
 #![license = "BSD"]
 #![crate_type = "lib"]
 
-#![deny(dead_code)]
+#![deny(dead_code, missing_doc)]
 #![feature(macro_rules,unsafe_destructor)]
 
 //! Bindings to libao, a low-level library for audio output.
@@ -105,6 +105,7 @@ impl AoError {
 /// without additional processing. Conspicuously missing from the default impls
 /// is a 24-bit type, simply because there isn't a Rust-native 24-bit type.
 pub trait Sample : Copy {
+    /// Number of channels each value of this type contains.
     fn channels(&self) -> uint;
 }
 
@@ -127,7 +128,7 @@ sample_impl!(channels 2)
 
 /// Describes audio sample formats.
 ///
-/// Used to specify the format which data will be fed to a Device
+/// Used to specify the format with which data will be fed to a Device.
 pub struct SampleFormat<T, S> {
     /// Samples per second (per channel)
     pub sample_rate: uint,
@@ -147,6 +148,7 @@ pub struct SampleFormat<T, S> {
 }
 
 impl<T: Sample, S: Str> SampleFormat<T, S> {
+    /// Construct a sample format specification.
     pub fn new(sample_rate: uint, channels: uint, byte_order: Endianness,
                matrix: Option<S>) -> SampleFormat<T, S> {
         SampleFormat {
@@ -283,6 +285,7 @@ impl DriverType {
 
 /// Properties and metadata for a driver.
 pub struct DriverInfo {
+    /// Type of the driver (live or file).
     pub flavor: DriverType,
     /// Full name of driver.
     /// 
@@ -293,6 +296,7 @@ pub struct DriverInfo {
     /// This is the driver name used to refer to the driver when performing
     /// lookups. It contains only alphanumeric characters, and no whitespace.
     pub short_name: CString,
+    /// A driver-specified comment.
     pub comment: Option<CString>,
 }
 
