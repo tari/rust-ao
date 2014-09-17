@@ -1,14 +1,33 @@
+//! Automatic device format adjustment.
+//!
+//! Given a way to poll the properties of an incoming buffer of samples, this module provides a way
+//! to automatically adjust the output `SampleFormat` so all data being fed to the output need not
+//! have the same format. This is particularly useful for situations where non-homogenous inputs
+//! can be switched to the same output, without requiring resampling prior to output.
+
 use super::{AoResult, Device, Driver, Sample, SampleFormat};
 use super::{Endianness, Native};
 use std::kinds::marker::InvariantType;
 use std::mem;
 
+/// A buffer containing samples.
+///
+/// Such buffer always has a defined number of channels and sample rate, in addition to the
+/// parameters normally provided in a `SampleFormat` specification.
 pub trait SampleBuffer {
+    /// Number of channels in this buffer.
     fn channels(&self) -> uint;
+    /// Sample rate of this buffer, in Hz.
     fn sample_rate(&self) -> uint;
+    /// Endianness of samples in this buffer.
     fn endianness(&self) -> Endianness;
+    /// Bit width of samples in this buffer.
     fn sample_width(&self) -> uint;
-    fn data(&self) -> (uint, *const u8);
+    /// Provides access to the sample data.
+    ///
+    /// No processing is performed on this data; it is passed straight through to the underlying
+    /// library.
+    fn data<'a>(&self) -> &'a [u8];
 }
 
 enum DeviceFormat<'a> {
@@ -59,6 +78,10 @@ impl<'a> DeviceFormat<'a> {
     }
 }
 
+/// Automatically adjusts the output format according to incoming buffers.
+///
+/// This device adapter can automatically manage the underlying `Device` to ensure it always has
+/// the correct sample format, so the format of incoming samples may change at runtime.
 pub struct AutoFormatDevice<'a, S> {
     channels: uint,
     sample_rate: uint,
@@ -69,6 +92,11 @@ pub struct AutoFormatDevice<'a, S> {
 }
 
 impl<'a, S: Str> AutoFormatDevice<'a, S> {
+    /// Construct a new AutoFormatDevice.
+    ///
+    /// Will be backed by the specified driver, and the `matrixes` is a list where an element's
+    /// index maps to the number of channels. See `Sampleformat.matrix` for the format of each
+    /// channel matrix.
     pub fn new(driver: Driver<'a>, matrixes: Vec<S>) -> AutoFormatDevice<'a, S> {
         AutoFormatDevice {
             channels: 0,
@@ -80,6 +108,10 @@ impl<'a, S: Str> AutoFormatDevice<'a, S> {
         }
     }
 
+    /// Play samples from a dynamic format buffer.
+    /// 
+    /// The underling device may be reopened, and returns `Err` if
+    /// the format of the buffer is not supported.
     pub fn play(&mut self, data: &SampleBuffer) -> AoResult<()> {
         let channels = data.channels();
         let sample_rate = data.sample_rate();
@@ -114,22 +146,18 @@ impl<'a, S: Str> AutoFormatDevice<'a, S> {
         self.endianness = endianness;
 
         // Do the playback
-        let (nsamples, buffer) = data.data();
-        unsafe {
-            let buffer = ::std::raw::Slice {
-                data: buffer,
-                len: nsamples
-            };
-            match self.device {
-                Some(ref f) => {
+        let buffer = data.data();
+        match self.device {
+            Some(ref f) => {
+                unsafe {
                     match *f {
                         Integer8(ref d) => d.play(mem::transmute(buffer)),
                         Integer16(ref d) => d.play(mem::transmute(buffer)),
                         Integer32(ref d) => d.play(mem::transmute(buffer)),
                     }
-                },
-                None => unreachable!()
-            }
+                }
+            },
+            None => unreachable!()
         }
         Ok(())
     }
