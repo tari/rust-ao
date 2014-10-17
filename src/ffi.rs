@@ -1,14 +1,14 @@
 use libc::{c_char, c_int, c_void};
 
-pub static AO_ENODRIVER: c_int = 1;
-pub static AO_ENOTFILE: c_int = 2;
-pub static AO_ENOTLIVE: c_int = 3;
-pub static AO_EBADOPTION: c_int = 4;
-pub static AO_EOPENDEVICE: c_int = 5;
-pub static AO_EOPENFILE: c_int = 6;
-pub static AO_EFILEEXISTS: c_int = 7;
-pub static AO_EBADFORMAT: c_int = 8;
-pub static AO_EFAIL: c_int = 100;
+pub const AO_ENODRIVER: c_int = 1;
+pub const AO_ENOTFILE: c_int = 2;
+pub const AO_ENOTLIVE: c_int = 3;
+pub const AO_EBADOPTION: c_int = 4;
+pub const AO_EOPENDEVICE: c_int = 5;
+pub const AO_EOPENFILE: c_int = 6;
+pub const AO_EFILEEXISTS: c_int = 7;
+pub const AO_EBADFORMAT: c_int = 8;
+pub const AO_EFAIL: c_int = 100;
 
 #[link(name="ao")]
 extern "C" {
@@ -52,8 +52,8 @@ pub struct ao_info {
     pub option_count: c_int,
 }
 
-pub static AO_TYPE_LIVE: c_int = 1;
-pub static AO_TYPE_FILE: c_int = 2;
+pub const AO_TYPE_LIVE: c_int = 1;
+pub const AO_TYPE_FILE: c_int = 2;
 
 #[repr(C)]
 pub struct ao_option {
@@ -74,6 +74,6 @@ pub struct ao_sample_format {
     pub matrix: *const c_char
 }
 
-pub static AO_FMT_LITTLE: c_int = 1;
-pub static AO_FMT_BIG: c_int = 2;
-pub static AO_FMT_NATIVE: c_int = 4;
+pub const AO_FMT_LITTLE: c_int = 1;
+pub const AO_FMT_BIG: c_int = 2;
+pub const AO_FMT_NATIVE: c_int = 4;
