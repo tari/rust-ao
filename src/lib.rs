@@ -43,7 +43,7 @@ use std::fmt;
 use std::intrinsics::size_of;
 use std::kinds::marker::{ContravariantLifetime, InvariantType};
 use std::os;
-use std::sync::atomics::{AtomicBool, Release, AcqRel, INIT_ATOMIC_BOOL};
+use std::sync::atomic::{AtomicBool, Release, AcqRel, INIT_ATOMIC_BOOL};
 use std::ptr;
 
 #[allow(non_camel_case_types, dead_code)]
