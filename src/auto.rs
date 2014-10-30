@@ -4,6 +4,37 @@
 //! to automatically adjust the output `SampleFormat` so all data being fed to the output need not
 //! have the same format. This is particularly useful for situations where non-homogenous inputs
 //! can be switched to the same output, without requiring resampling prior to output.
+//!
+//! ```
+//! use ao::AO;
+//! use ao::auto::{SampleBuffer, AutoFormatDevice};
+//!
+//! struct Stereo(u16, u16);
+//! 
+//! impl SampleBuffer for [Stereo] {
+//!     fn channels(&self) -> uint { 2 }
+//!     fn sample_rate(&self) -> uint { 44100 }
+//!     fn endianness(&self) -> ao::Endianness { ao::Native }
+//!     fn sample_width(&self) -> uint { 16 }
+//!     fn data<'a>(&self) -> &'a [u8] { 
+//!         unsafe {
+//!             ::std::mem::transmute(::std::raw::Slice {
+//!                 data: self.as_ptr() as *const u8,
+//!                 len: self.len() * 4
+//!             })
+//!         }
+//!     }
+//! }
+//!
+//! fn main() {
+//!     let lib = AO::init();
+//!     let driver = lib.get_driver("").expect("No default driver available");
+//!     let mut device = AutoFormatDevice::new(driver, vec!["", "L", "L,R"]);
+//!
+//!     let data = vec![Stereo(16383, -16383)];
+//!     device.play(data.as_slice()).unwrap();
+//! }
+//! ```
 
 use super::{AoResult, Device, Driver, Sample, SampleFormat};
 use super::{Endianness, Native};
@@ -14,7 +45,7 @@ use std::mem;
 ///
 /// Such buffer always has a defined number of channels and sample rate, in addition to the
 /// parameters normally provided in a `SampleFormat` specification.
-pub trait SampleBuffer {
+pub trait SampleBuffer for Sized? {
     /// Number of channels in this buffer.
     fn channels(&self) -> uint;
     /// Sample rate of this buffer, in Hz.
@@ -73,7 +104,7 @@ impl<'a> DeviceFormat<'a> {
                 let format = build_format::<i32>(rate, channels, endianness, matrix);
                 driver.open_live(&format).map(|x| Integer32(x))
             },
-            x => fail!("AutoFormatDevice does not support {}-bit samples", x)
+            x => panic!("AutoFormatDevice does not support {}-bit samples", x)
         }
     }
 }

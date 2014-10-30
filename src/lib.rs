@@ -18,7 +18,7 @@
 //!     let format = SampleFormat::<i16, &'static str>::new(44100, 1, Native, None);
 //!     let driver = match lib.get_driver("wav") {
 //!         Some(d) => d,
-//!         None => fail!("No such driver: \"wav\"")
+//!         None => panic!("No such driver: \"wav\"")
 //!     };
 //!     
 //!     match driver.open_file(&format, &Path::new("out.wav"), false) {
@@ -214,7 +214,7 @@ impl AO {
     pub fn init() -> AO {
         unsafe {
             if FFI_INITIALIZED.compare_and_swap(false, true, AcqRel) {
-                fail!("Attempted multiple instantiation of ao::AO")
+                panic!("Attempted multiple instantiation of ao::AO")
             }
             ffi::ao_initialize();
         };
@@ -278,7 +278,7 @@ impl DriverType {
         match n {
             ffi::AO_TYPE_FILE => File,
             ffi::AO_TYPE_LIVE => Live,
-            n => fail!("Invalid AO_TYPE_*: {}", n)
+            n => panic!("Invalid AO_TYPE_*: {}", n)
         }
     }
 }
