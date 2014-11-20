@@ -37,7 +37,7 @@
 //! ```
 
 use super::{AoResult, Device, Driver, Sample, SampleFormat};
-use super::{Endianness, Native};
+use super::Endianness;
 use std::kinds::marker::InvariantType;
 use std::mem;
 
@@ -70,9 +70,9 @@ enum DeviceFormat<'a> {
 impl<'a> DeviceFormat<'a> {
     fn sample_width(&self) -> uint {
         match *self {
-            Integer8(_) => 8,
-            Integer16(_) => 16,
-            Integer32(_) => 32,
+            DeviceFormat::Integer8(_) => 8,
+            DeviceFormat::Integer16(_) => 16,
+            DeviceFormat::Integer32(_) => 32,
         }
     }
 
@@ -94,15 +94,15 @@ impl<'a> DeviceFormat<'a> {
         match width {
             8 => {
                 let format = build_format::<i8>(rate, channels, endianness, matrix);
-                driver.open_live(&format).map(|x| Integer8(x))
+                driver.open_live(&format).map(|x| DeviceFormat::Integer8(x))
             },
             16 => {
                 let format = build_format::<i16>(rate, channels, endianness, matrix);
-                driver.open_live(&format).map(|x| Integer16(x))
+                driver.open_live(&format).map(|x| DeviceFormat::Integer16(x))
             },
             32 => {
                 let format = build_format::<i32>(rate, channels, endianness, matrix);
-                driver.open_live(&format).map(|x| Integer32(x))
+                driver.open_live(&format).map(|x| DeviceFormat::Integer32(x))
             },
             x => panic!("AutoFormatDevice does not support {}-bit samples", x)
         }
@@ -132,7 +132,7 @@ impl<'a, S: Str> AutoFormatDevice<'a, S> {
         AutoFormatDevice {
             channels: 0,
             sample_rate: 0,
-            endianness: Native,
+            endianness: Endianness::Native,
             device: None,
             driver: driver,
             matrixes: matrixes
@@ -182,9 +182,9 @@ impl<'a, S: Str> AutoFormatDevice<'a, S> {
             Some(ref f) => {
                 unsafe {
                     match *f {
-                        Integer8(ref d) => d.play(mem::transmute(buffer)),
-                        Integer16(ref d) => d.play(mem::transmute(buffer)),
-                        Integer32(ref d) => d.play(mem::transmute(buffer)),
+                        DeviceFormat::Integer8(ref d) => d.play(mem::transmute(buffer)),
+                        DeviceFormat::Integer16(ref d) => d.play(mem::transmute(buffer)),
+                        DeviceFormat::Integer32(ref d) => d.play(mem::transmute(buffer)),
                     }
                 }
             },

@@ -1,9 +1,15 @@
 
 [package]
-
 name = "ao"
-version = "0.2.0"
+version = "0.2.1"
 authors = [ "peter@taricorp.net" ]
+license = "BSD-2-Clause"
+
+description = "Bindings to Xiph.org's libao"
+documentation = "http://rust-ci.org/tari/rust-ao/doc/ao/"
+repository = "https://bitbucket.org/tari/rust-ao/"
+readme = "README.md"
+keywords = ["audio", "bindings"]
 
 [lib]
 name = "ao"

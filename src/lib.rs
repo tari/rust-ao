@@ -4,7 +4,7 @@
 #![license = "BSD"]
 #![crate_type = "lib"]
 
-#![deny(dead_code, missing_doc)]
+#![deny(dead_code, missing_docs)]
 #![feature(macro_rules,unsafe_destructor)]
 
 //! Bindings to libao, a low-level library for audio output.
@@ -87,14 +87,14 @@ pub enum AoError {
 impl AoError {
     fn from_errno() -> AoError {
         match os::errno() as c_int {
-            ffi::AO_ENODRIVER => NoDriver,
-            ffi::AO_ENOTFILE => NotFile,
-            ffi::AO_ENOTLIVE => NotLive,
-            ffi::AO_EBADOPTION => BadOption,
-            ffi::AO_EOPENDEVICE => OpenDevice,
-            ffi::AO_EFILEEXISTS => FileExists,
-            ffi::AO_EBADFORMAT => BadFormat,
-            _ => Unknown
+            ffi::AO_ENODRIVER => AoError::NoDriver,
+            ffi::AO_ENOTFILE => AoError::NotFile,
+            ffi::AO_ENOTLIVE => AoError::NotLive,
+            ffi::AO_EBADOPTION => AoError::BadOption,
+            ffi::AO_EOPENDEVICE => AoError::OpenDevice,
+            ffi::AO_EFILEEXISTS => AoError::FileExists,
+            ffi::AO_EBADFORMAT => AoError::BadFormat,
+            _ => AoError::Unknown
         }
     }
 }
@@ -276,8 +276,8 @@ pub enum DriverType {
 impl DriverType {
     fn from_c_int(n: c_int) -> DriverType {
         match n {
-            ffi::AO_TYPE_FILE => File,
-            ffi::AO_TYPE_LIVE => Live,
+            ffi::AO_TYPE_FILE => DriverType::File,
+            ffi::AO_TYPE_LIVE => DriverType::Live,
             n => panic!("Invalid AO_TYPE_*: {}", n)
         }
     }
@@ -461,7 +461,7 @@ fn test_sample_variance() {
 /// Task fails on multiple initialization.
 #[test]
 #[should_fail]
-#[allow(unused_variable)]
+#[allow(unused_variables)]
 fn test_multiple_instantiation() {
     let lib = AO::init();
     let lib2 = AO::init();
