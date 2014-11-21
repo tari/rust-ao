@@ -1,6 +1,6 @@
 env:
   global:
-      - secure: hhaRYVg9OnHrtyJ17RG2WZggo5TZqhULoBtl1uRU58tccT0syKn88AHMu0yi4LkFgqrtJ1QzStfRzfsSQNMBbh90ctZVPGzk1450H1YtsCJngLiAWp7JS/g+18p1QaOyMGTr5YzpkNxpypk4+83b0UJLlkbFJIvRhD3AOuN7A9A=
+      - secure: Bj+BPOGhxYEdDRgD3FCpTMb5I7kOat5PZagbPXl/8Op4KQoU386sWf10GtQhQpAXJIcCbSZQPxiAB9cYw/LQOCN4HGHB8Uw3SSewPy6z4OBQ42I/BGiF+HypuIWy9pCj9qw3LLPnGeCHWBs7G3X+PnuJio6ROxEIGYnh9VVAFcM=
 language: rust
 install:
   - sudo apt-get install -qq libao-dev
