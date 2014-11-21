@@ -11,7 +11,7 @@
 //!
 //! struct Stereo(u16, u16);
 //! 
-//! impl SampleBuffer for [Stereo] {
+//! impl<'a> SampleBuffer for &'a [Stereo] {
 //!     fn channels(&self) -> uint { 2 }
 //!     fn sample_rate(&self) -> uint { 44100 }
 //!     fn endianness(&self) -> ao::Endianness { ao::Native }
@@ -32,7 +32,10 @@
 //!     let mut device = AutoFormatDevice::new(driver, vec!["", "L", "L,R"]);
 //!
 //!     let data = vec![Stereo(16383, -16383)];
-//!     device.play(data.as_slice()).unwrap();
+//!     match device.play(&data.as_slice()) {
+//!         Ok(_) => (),
+//!         Err(e) => println!("Playback failed: {}", e)
+//!     }
 //! }
 //! ```
 
