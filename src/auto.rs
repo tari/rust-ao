@@ -14,7 +14,7 @@
 //! impl<'a> SampleBuffer for &'a [Stereo] {
 //!     fn channels(&self) -> uint { 2 }
 //!     fn sample_rate(&self) -> uint { 44100 }
-//!     fn endianness(&self) -> ao::Endianness { ao::Native }
+//!     fn endianness(&self) -> ao::Endianness { ao::Endianness::Native }
 //!     fn sample_width(&self) -> uint { 16 }
 //!     fn data<'a>(&self) -> &'a [u8] { 
 //!         unsafe {
