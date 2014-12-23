@@ -1,7 +1,5 @@
 #![crate_name = "ao"]
 #![doc(html_root_url = "http://www.rust-ci.org/tari/rust-ao/doc/ao/")]
-#![desc = "libao bindings"]
-#![license = "BSD"]
 #![crate_type = "lib"]
 
 #![deny(dead_code, missing_docs)]
@@ -10,7 +8,8 @@
 //! Bindings to libao, a low-level library for audio output.
 //!
 //! ```no_run
-//! use ao::{AO, SampleFormat, Native};
+//! use ao::{AO, SampleFormat};
+//! use ao::Endianness::Native;
 //! use std::num::FloatMath;
 //!
 //! fn main() {
@@ -84,6 +83,8 @@ pub enum AoError {
     Unknown = ffi::AO_EFAIL as int,
 }
 
+impl Copy for AoError { }
+
 impl AoError {
     fn from_errno() -> AoError {
         match os::errno() as c_int {
@@ -92,9 +93,26 @@ impl AoError {
             ffi::AO_ENOTLIVE => AoError::NotLive,
             ffi::AO_EBADOPTION => AoError::BadOption,
             ffi::AO_EOPENDEVICE => AoError::OpenDevice,
+            ffi::AO_EOPENFILE => AoError::OpenFile,
             ffi::AO_EFILEEXISTS => AoError::FileExists,
             ffi::AO_EBADFORMAT => AoError::BadFormat,
             _ => AoError::Unknown
+        }
+    }
+}
+
+impl ::std::error::Error for AoError {
+    fn description(&self) -> &str {
+        match *self {
+            AoError::NoDriver => "No such driver",
+            AoError::NotFile => "Driver is not a file output device",
+            AoError::NotLive => "Driver is not a live output device",
+            AoError::BadOption => "A valid option key has an invalid value",
+            AoError::OpenDevice => "Cannot open the output device",
+            AoError::OpenFile => "Cannot open the output file",
+            AoError::FileExists => "File for output already exists",
+            AoError::BadFormat => "Requested stream format is not supported",
+            AoError::Unknown => "Unknown error"
         }
     }
 }
@@ -120,11 +138,11 @@ macro_rules! sample_impl(
             fn channels(&self) -> uint { $w }
         }
     )
-)
-sample_impl!(i8)
-sample_impl!(i16)
-sample_impl!(i32)
-sample_impl!(channels 2)
+);
+sample_impl!(i8);
+sample_impl!(i16);
+sample_impl!(i32);
+sample_impl!(channels 2);
 
 /// Describes audio sample formats.
 ///
@@ -196,6 +214,8 @@ pub enum Endianness {
     /// Machine's default byte order
     Native = ffi::AO_FMT_NATIVE as int,
 }
+
+impl Copy for Endianness { }
 
 /// Library owner.
 ///
@@ -272,6 +292,8 @@ pub enum DriverType {
     /// File output, such as to a `wav` file on disk.
     File
 }
+
+impl Copy for DriverType { }
 
 impl DriverType {
     fn from_c_int(n: c_int) -> DriverType {
