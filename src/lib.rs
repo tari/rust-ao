@@ -3,14 +3,15 @@
 #![crate_type = "lib"]
 
 #![deny(dead_code, missing_docs)]
-#![feature(macro_rules,unsafe_destructor)]
+#![feature(unsafe_destructor)]
 
 //! Bindings to libao, a low-level library for audio output.
 //!
 //! ```no_run
 //! use ao::{AO, SampleFormat};
 //! use ao::Endianness::Native;
-//! use std::num::FloatMath;
+//! use std::error::Error;
+//! use std::num::Float;
 //!
 //! fn main() {
 //!     let lib = AO::init();
@@ -20,15 +21,15 @@
 //!         None => panic!("No such driver: \"wav\"")
 //!     };
 //!     
-//!     match driver.open_file(&format, &Path::new("out.wav"), false) {
+//!     match driver.open_file(&format, Path::new("out.wav"), false) {
 //!         Ok(d) => {
-//!             let samples = Vec::<i16>::from_fn(44100, |i| {
+//!             let samples: Vec<i16> = range(0, 44100).map(|i| {
 //!                 ((1.0 / 44100.0 / 440.0 * i as f32).sin() * 32767.0) as i16
-//!             });
+//!             }).collect();
 //!             d.play(samples.as_slice());
 //!         }
 //!         Err(e) => {
-//!             println!("Failed to open output file: {}", e);
+//!             println!("Failed to open output file: {}", e.description());
 //!         }
 //!     }
 //! }
@@ -36,13 +37,15 @@
 
 extern crate libc;
 
-use libc::c_int;
-use std::c_str::CString;
-use std::fmt;
+use libc::{c_int, c_char};
+use std::error::Error;
+use std::ffi::{c_str_to_bytes, CString};
 use std::intrinsics::size_of;
-use std::kinds::marker::{ContravariantLifetime, InvariantType};
+use std::marker::{ContravariantLifetime, InvariantType};
+use std::mem;
 use std::os;
-use std::sync::atomic::{AtomicBool, Release, AcqRel, INIT_ATOMIC_BOOL};
+use std::str;
+use std::sync::atomic::{AtomicBool, Ordering, ATOMIC_BOOL_INIT};
 use std::ptr;
 
 #[allow(non_camel_case_types, dead_code)]
@@ -52,7 +55,7 @@ pub mod auto;
 /// Output for libao functions that may fail.
 pub type AoResult<T> = Result<T, AoError>;
 
-#[deriving(PartialEq, Eq, Show)]
+#[derive(PartialEq, Eq, Show)]
 /// Result of (most) operations that may fail.
 pub enum AoError {
     /// No driver is available.
@@ -60,27 +63,27 @@ pub enum AoError {
     /// This means either:
     ///  * There is no driver matching the requested name
     ///  * There are no usable audio output devices
-    NoDriver = ffi::AO_ENODRIVER as int,
+    NoDriver = ffi::AO_ENODRIVER as isize,
     /// The specified driver does not do file output.
-    NotFile = ffi::AO_ENOTFILE as int,
+    NotFile = ffi::AO_ENOTFILE as isize,
     /// The specified driver does not do live output.
-    NotLive = ffi::AO_ENOTLIVE as int,
+    NotLive = ffi::AO_ENOTLIVE as isize,
     /// A known driver option has an invalid value.
-    BadOption = ffi::AO_EBADOPTION as int,
+    BadOption = ffi::AO_EBADOPTION as isize,
     /// Could not open the output device.
     ///
     /// For example, if `/dev/dsp` could not be opened with the OSS driver.
-    OpenDevice = ffi::AO_EOPENDEVICE as int,
+    OpenDevice = ffi::AO_EOPENDEVICE as isize,
     /// Could not open the output file.
-    OpenFile = ffi::AO_EOPENFILE as int,
+    OpenFile = ffi::AO_EOPENFILE as isize,
     /// The specified file already exists.
-    FileExists = ffi::AO_EFILEEXISTS as int,
+    FileExists = ffi::AO_EFILEEXISTS as isize,
     /// The requested stream format is not supported.
     ///
     /// This is usually the result of an invalid channel matrix.
-    BadFormat = ffi::AO_EBADFORMAT as int,
+    BadFormat = ffi::AO_EBADFORMAT as isize,
     /// Unspecified error.
-    Unknown = ffi::AO_EFAIL as int,
+    Unknown = ffi::AO_EFAIL as isize,
 }
 
 impl Copy for AoError { }
@@ -101,7 +104,7 @@ impl AoError {
     }
 }
 
-impl ::std::error::Error for AoError {
+impl Error for AoError {
     fn description(&self) -> &str {
         match *self {
             AoError::NoDriver => "No such driver",
@@ -124,18 +127,20 @@ impl ::std::error::Error for AoError {
 /// is a 24-bit type, simply because there isn't a Rust-native 24-bit type.
 pub trait Sample : Copy {
     /// Number of channels each value of this type contains.
-    fn channels(&self) -> uint;
+    fn channels(&self) -> usize;
 }
 
 macro_rules! sample_impl(
     ($t:ty) => (
+        #[inline]
         impl Sample for $t {
-            fn channels(&self) -> uint { 1 }
+            fn channels(&self) -> usize { 1 }
         }
     );
     (channels $w:expr) => (
-        impl<S: Sample> Sample for [S, ..$w] {
-            fn channels(&self) -> uint { $w }
+        #[inline]
+        impl<S: Sample> Sample for [S; $w] {
+            fn channels(&self) -> usize { $w }
         }
     )
 );
@@ -149,9 +154,9 @@ sample_impl!(channels 2);
 /// Used to specify the format with which data will be fed to a Device.
 pub struct SampleFormat<T, S> {
     /// Samples per second (per channel)
-    pub sample_rate: uint,
+    pub sample_rate: usize,
     /// Number of channels
-    pub channels: uint,
+    pub channels: usize,
     /// Byte order of samples.
     pub byte_order: Endianness,
     /// Maps input channels to output locations in a comma-separated list.
@@ -167,7 +172,7 @@ pub struct SampleFormat<T, S> {
 
 impl<T: Sample, S: Str> SampleFormat<T, S> {
     /// Construct a sample format specification.
-    pub fn new(sample_rate: uint, channels: uint, byte_order: Endianness,
+    pub fn new(sample_rate: usize, channels: usize, byte_order: Endianness,
                matrix: Option<S>) -> SampleFormat<T, S> {
         SampleFormat {
             sample_rate: sample_rate,
@@ -178,41 +183,44 @@ impl<T: Sample, S: Str> SampleFormat<T, S> {
         }
     }
 
-    fn with_native<U>(&self, f: |*const ffi::ao_sample_format| -> U) -> U {
+    fn with_native<F, U>(&self, f: F) -> U
+            where F: FnOnce(*const ffi::ao_sample_format) -> U {
         let sample_size = unsafe {
             size_of::<T>() * 8
+        };
+
+        let matrix: Option<CString> = match self.matrix {
+            None => None,
+            Some(ref s) => Some(
+                // Must as_slice first because Str doesn't impl Deref
+                CString::from_slice(s.as_slice().as_bytes())
+            )
         };
         // The caller of ao_open_* functions retains ownership of the ao_format
         // it passes in, but the native representation owns a raw C string.
         // We must ensure the raw C string is freed, so the actual
         // ao_sample_format never leaves this scope.
-        let mut native = ffi::ao_sample_format {
+        let native = ffi::ao_sample_format {
             bits: sample_size as c_int,
             rate: self.sample_rate as c_int,
             channels: self.channels as c_int,
             byte_format: self.byte_order as c_int,
-            matrix: ptr::null()
+            matrix: matrix.map_or(ptr::null(), |cs| cs.as_ptr())
         };
 
-        match self.matrix {
-            None => f(&native),
-            Some(ref s) => s.as_slice().with_c_str(|s| {
-                native.matrix = s;
-                f(&native)
-            })
-        }
+        f(&native as *const _)
     }
 }
 
 /// Sample byte ordering.
-#[deriving(PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub enum Endianness {
     /// Least-significant byte first
-    Little = ffi::AO_FMT_LITTLE as int,
+    Little = ffi::AO_FMT_LITTLE as isize,
     /// Most-significant byte first
-    Big = ffi::AO_FMT_BIG as int,
+    Big = ffi::AO_FMT_BIG as isize,
     /// Machine's default byte order
-    Native = ffi::AO_FMT_NATIVE as int,
+    Native = ffi::AO_FMT_NATIVE as isize,
 }
 
 impl Copy for Endianness { }
@@ -227,13 +235,13 @@ impl Copy for Endianness { }
 /// some output drivers that can cause segfaults on thread exit.
 pub struct AO;
 
-static mut FFI_INITIALIZED: AtomicBool = INIT_ATOMIC_BOOL;
+static mut FFI_INITIALIZED: AtomicBool = ATOMIC_BOOL_INIT;
 
 impl AO {
     /// Get the `AO`
     pub fn init() -> AO {
         unsafe {
-            if FFI_INITIALIZED.compare_and_swap(false, true, AcqRel) {
+            if FFI_INITIALIZED.compare_and_swap(false, true, Ordering::AcqRel) {
                 panic!("Attempted multiple instantiation of ao::AO")
             }
             ffi::ao_initialize();
@@ -254,9 +262,10 @@ impl AO {
     /// driver will not necessarily be a live output.
     pub fn get_driver<'a>(&'a self, name: &str) -> Option<Driver<'a>> {
         let id = if name != "" {
-            name.with_c_str(|name| unsafe {
-                ffi::ao_driver_id(name)
-            })
+            let cs = CString::from_slice(name.as_bytes());
+            unsafe {
+                ffi::ao_driver_id(cs.as_ptr())
+            }
         } else {
             unsafe {
                 ffi::ao_default_driver_id()
@@ -279,13 +288,13 @@ impl Drop for AO {
     fn drop(&mut self) {
         unsafe {
             ffi::ao_shutdown();
-            FFI_INITIALIZED.store(false, Release);
+            FFI_INITIALIZED.store(false, Ordering::Release);
         }
     }
 }
 
 /// The output type of a driver.
-#[deriving(Show)]
+#[derive(Show)]
 pub enum DriverType {
     /// Live playback, such as a local sound card.
     Live,
@@ -306,30 +315,24 @@ impl DriverType {
 }
 
 /// Properties and metadata for a driver.
+#[derive(Show)]
 pub struct DriverInfo {
     /// Type of the driver (live or file).
     pub flavor: DriverType,
     /// Full name of driver.
     /// 
     /// May contain any single line of text.
-    pub name: CString,
+    pub name: &'static str,
     /// Short name of driver.
     /// 
     /// This is the driver name used to refer to the driver when performing
     /// lookups. It contains only alphanumeric characters, and no whitespace.
-    pub short_name: CString,
+    pub short_name: &'static str,
     /// A driver-specified comment.
-    pub comment: Option<CString>,
+    pub comment: Option<&'static str>,
 }
 
-impl fmt::Show for DriverInfo {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<{} \"{}\", {}>",
-               self.name.as_str(),
-               self.short_name.as_str(),
-               self.flavor)
-    }
-}
+impl Copy for DriverInfo { }
 
 /// An output driver.
 ///
@@ -344,15 +347,23 @@ impl<'a> Driver<'a> {
     pub fn get_info(&self) -> Option<DriverInfo> {
         let id = self.id;
 
+        /// Turn a non-null C string pointer into static string slice.
+        ///
+        /// Panics if the string is not valid UTF-8.
+        unsafe fn sstr(s: *const c_char) -> &'static str {
+            let ss = mem::transmute::<&*const c_char, &'static *const c_char>(&s);
+            str::from_utf8(c_str_to_bytes(ss)).unwrap()
+        }
+
         unsafe {
             ffi::ao_driver_info(id).as_ref().map(|info| {
                 DriverInfo {
-                    name: CString::new(info.name, false),
-                    short_name: CString::new(info.short_name, false),
+                    name: sstr(info.name),
+                    short_name: sstr(info.short_name),
                     comment: if info.comment.is_null() {
                         None
                     } else {
-                        Some(CString::new(info.comment, false))
+                        Some(sstr(info.comment))
                     },
                     flavor: DriverType::from_c_int(info.flavor),
                 }
@@ -380,12 +391,14 @@ impl<'a> Driver<'a> {
     ///
     /// Returns `NotFile` if the requested driver is not a file output driver.
     pub fn open_file<T: Sample, S: Str>(&self,
-            format: &SampleFormat<T, S>, file: &Path,
+            format: &SampleFormat<T, S>, file: Path,
             overwrite: bool) -> AoResult<Device<'a, T>> {
+
+        let c_path = CString::from_vec(file.into_vec());
         let handle = format.with_native(|f| {
-            file.with_c_str(|filename| unsafe {
-                ffi::ao_open_file(self.id, filename, overwrite as c_int, f, ptr::null())
-            })
+            unsafe {
+                ffi::ao_open_file(self.id, c_path.as_ptr(), overwrite as c_int, f, ptr::null())
+            }
         });
 
         Device::<'a, T>::init(handle)
