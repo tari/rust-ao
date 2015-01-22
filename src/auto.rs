@@ -8,14 +8,15 @@
 //! ```
 //! use ao::AO;
 //! use ao::auto::{SampleBuffer, AutoFormatDevice};
+//! use std::error::Error;
 //!
 //! struct Stereo(u16, u16);
 //! 
-//! impl<'a> SampleBuffer for &'a [Stereo] {
-//!     fn channels(&self) -> uint { 2 }
-//!     fn sample_rate(&self) -> uint { 44100 }
+//! impl<'z> SampleBuffer for &'z [Stereo] {
+//!     fn channels(&self) -> usize { 2 }
+//!     fn sample_rate(&self) -> usize { 44100 }
 //!     fn endianness(&self) -> ao::Endianness { ao::Endianness::Native }
-//!     fn sample_width(&self) -> uint { 16 }
+//!     fn sample_width(&self) -> usize { 16 }
 //!     fn data<'a>(&self) -> &'a [u8] { 
 //!         unsafe {
 //!             ::std::mem::transmute(::std::raw::Slice {
@@ -34,29 +35,29 @@
 //!     let data = vec![Stereo(16383, -16383)];
 //!     match device.play(&data.as_slice()) {
 //!         Ok(_) => (),
-//!         Err(e) => println!("Playback failed: {}", e)
+//!         Err(e) => println!("Playback failed: {}", e.description())
 //!     }
 //! }
 //! ```
 
 use super::{AoResult, Device, Driver, Sample, SampleFormat};
 use super::Endianness;
-use std::kinds::marker::InvariantType;
+use std::marker::InvariantType;
 use std::mem;
 
 /// A buffer containing samples.
 ///
 /// Such buffer always has a defined number of channels and sample rate, in addition to the
 /// parameters normally provided in a `SampleFormat` specification.
-pub trait SampleBuffer for Sized? {
+pub trait SampleBuffer {
     /// Number of channels in this buffer.
-    fn channels(&self) -> uint;
+    fn channels(&self) -> usize;
     /// Sample rate of this buffer, in Hz.
-    fn sample_rate(&self) -> uint;
+    fn sample_rate(&self) -> usize;
     /// Endianness of samples in this buffer.
     fn endianness(&self) -> Endianness;
     /// Bit width of samples in this buffer.
-    fn sample_width(&self) -> uint;
+    fn sample_width(&self) -> usize;
     /// Provides access to the sample data.
     ///
     /// No processing is performed on this data; it is passed straight through to the underlying
@@ -71,7 +72,7 @@ enum DeviceFormat<'a> {
 }
 
 impl<'a> DeviceFormat<'a> {
-    fn sample_width(&self) -> uint {
+    fn sample_width(&self) -> usize {
         match *self {
             DeviceFormat::Integer8(_) => 8,
             DeviceFormat::Integer16(_) => 16,
@@ -79,11 +80,11 @@ impl<'a> DeviceFormat<'a> {
         }
     }
 
-    fn new(driver: &Driver<'a>, width: uint,
-           rate: uint, channels: uint, endianness: Endianness,
+    fn new(driver: &Driver<'a>, width: usize,
+           rate: usize, channels: usize, endianness: Endianness,
            matrix: Option<&str>) -> AoResult<DeviceFormat<'a>> {
 
-        fn build_format<S: Sample>(rate: uint, channels: uint, order: Endianness,
+        fn build_format<S: Sample>(rate: usize, channels: usize, order: Endianness,
                                    matrix: Option<&str>) -> SampleFormat<S, &str> {
             SampleFormat {
                 sample_rate: rate,
@@ -117,8 +118,8 @@ impl<'a> DeviceFormat<'a> {
 /// This device adapter can automatically manage the underlying `Device` to ensure it always has
 /// the correct sample format, so the format of incoming samples may change at runtime.
 pub struct AutoFormatDevice<'a, S> {
-    channels: uint,
-    sample_rate: uint,
+    channels: usize,
+    sample_rate: usize,
     endianness: Endianness,
     device: Option<DeviceFormat<'a>>,
     driver: Driver<'a>,
@@ -196,13 +197,13 @@ impl<'a, S: Str> AutoFormatDevice<'a, S> {
         Ok(())
     }
 
-    fn open_device(&self, width: uint, rate: uint, channels: uint,
+    fn open_device(&self, width: usize, rate: usize, channels: usize,
                    endianness: Endianness) -> AoResult<DeviceFormat<'a>> {
         DeviceFormat::new(&self.driver, width, rate, channels, endianness,
                           self.matrix_for(channels))
     }
 
-    fn matrix_for(&self, nchannels: uint) -> Option<&str> {
+    fn matrix_for(&self, nchannels: usize) -> Option<&str> {
         if self.matrixes.len() <= nchannels {
             None
         } else {
