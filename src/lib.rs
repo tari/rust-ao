@@ -40,6 +40,7 @@ extern crate libc;
 use libc::{c_int, c_char};
 use std::error::Error;
 use std::ffi::{c_str_to_bytes, CString};
+use std::fmt;
 use std::intrinsics::size_of;
 use std::marker::{ContravariantLifetime, InvariantType};
 use std::mem;
@@ -117,6 +118,12 @@ impl Error for AoError {
             AoError::BadFormat => "Requested stream format is not supported",
             AoError::Unknown => "Unknown error"
         }
+    }
+}
+
+impl fmt::Display for AoError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        f.write_str(self.description())
     }
 }
 
