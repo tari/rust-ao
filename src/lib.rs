@@ -5,6 +5,8 @@
 #![deny(dead_code, missing_docs)]
 #![feature(unsafe_destructor)]
 
+#![feature(libc, core, os, std_misc)]
+
 //! Bindings to libao, a low-level library for audio output.
 //!
 //! ```no_run
@@ -56,7 +58,7 @@ pub mod auto;
 /// Output for libao functions that may fail.
 pub type AoResult<T> = Result<T, AoError>;
 
-#[derive(PartialEq, Eq, Show)]
+#[derive(PartialEq, Eq, Debug)]
 /// Result of (most) operations that may fail.
 pub enum AoError {
     /// No driver is available.
@@ -301,7 +303,7 @@ impl Drop for AO {
 }
 
 /// The output type of a driver.
-#[derive(Show)]
+#[derive(Debug)]
 pub enum DriverType {
     /// Live playback, such as a local sound card.
     Live,
@@ -322,7 +324,7 @@ impl DriverType {
 }
 
 /// Properties and metadata for a driver.
-#[derive(Show)]
+#[derive(Debug)]
 pub struct DriverInfo {
     /// Type of the driver (live or file).
     pub flavor: DriverType,
