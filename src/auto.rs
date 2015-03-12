@@ -42,7 +42,7 @@
 
 use super::{AoResult, Device, Driver, Sample, SampleFormat};
 use super::Endianness;
-use std::marker::InvariantType;
+use std::marker::PhantomData;
 use std::mem;
 
 /// A buffer containing samples.
@@ -91,7 +91,7 @@ impl<'a> DeviceFormat<'a> {
                 channels: channels,
                 byte_order: order,
                 matrix: matrix,
-                marker: InvariantType
+                marker: PhantomData
             }
         }
 
