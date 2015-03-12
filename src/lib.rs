@@ -5,11 +5,11 @@
 #![deny(dead_code, missing_docs)]
 #![feature(unsafe_destructor)]
 
-#![feature(libc, core, os, std_misc)]
+#![feature(libc, core, path, os)]
 
 //! Bindings to libao, a low-level library for audio output.
 //!
-//! ```no_run
+//! ```
 //! use ao::{AO, SampleFormat};
 //! use ao::Endianness::Native;
 //! use std::error::Error;
@@ -41,12 +41,12 @@ extern crate libc;
 
 use libc::{c_int, c_char};
 use std::error::Error;
-use std::ffi::{c_str_to_bytes, CString};
+use std::ffi::{CStr, CString};
 use std::fmt;
 use std::intrinsics::size_of;
-use std::marker::{ContravariantLifetime, InvariantType};
-use std::mem;
+use std::marker::PhantomData;
 use std::os;
+use std::path::Path;
 use std::str;
 use std::sync::atomic::{AtomicBool, Ordering, ATOMIC_BOOL_INIT};
 use std::ptr;
@@ -176,7 +176,7 @@ pub struct SampleFormat<T, S> {
     /// Refer to the [`matrix` documentation](https://www.xiph.org/ao/doc/ao_sample_format.html)
     /// for additional information and examples.
     pub matrix: Option<S>,
-    marker: InvariantType<T>,
+    marker: PhantomData<T>
 }
 
 impl<T: Sample, S: Str> SampleFormat<T, S> {
@@ -188,7 +188,7 @@ impl<T: Sample, S: Str> SampleFormat<T, S> {
             channels: channels,
             byte_order: byte_order,
             matrix: matrix,
-            marker: InvariantType
+            marker: PhantomData
         }
     }
 
@@ -200,10 +200,7 @@ impl<T: Sample, S: Str> SampleFormat<T, S> {
 
         let matrix: Option<CString> = match self.matrix {
             None => None,
-            Some(ref s) => Some(
-                // Must as_slice first because Str doesn't impl Deref
-                CString::from_slice(s.as_slice().as_bytes())
-            )
+            Some(ref s) => CString::new(s.as_slice()).ok()
         };
         // The caller of ao_open_* functions retains ownership of the ao_format
         // it passes in, but the native representation owns a raw C string.
@@ -271,7 +268,10 @@ impl AO {
     /// driver will not necessarily be a live output.
     pub fn get_driver<'a>(&'a self, name: &str) -> Option<Driver<'a>> {
         let id = if name != "" {
-            let cs = CString::from_slice(name.as_bytes());
+            let cs = match CString::new(name) {
+                Ok(s) => s,
+                Err(_) => return None
+            };
             unsafe {
                 ffi::ao_driver_id(cs.as_ptr())
             }
@@ -286,7 +286,7 @@ impl AO {
         } else {
             Some(Driver {
                 id: id,
-                marker: ContravariantLifetime
+                marker: PhantomData
             })
         }
     }
@@ -325,43 +325,42 @@ impl DriverType {
 
 /// Properties and metadata for a driver.
 #[derive(Debug)]
-pub struct DriverInfo {
+pub struct DriverInfo<'a> {
     /// Type of the driver (live or file).
     pub flavor: DriverType,
     /// Full name of driver.
     /// 
     /// May contain any single line of text.
-    pub name: &'static str,
+    pub name: &'a str,
     /// Short name of driver.
     /// 
     /// This is the driver name used to refer to the driver when performing
     /// lookups. It contains only alphanumeric characters, and no whitespace.
-    pub short_name: &'static str,
+    pub short_name: &'a str,
     /// A driver-specified comment.
-    pub comment: Option<&'static str>,
+    pub comment: Option<&'a str>,
 }
 
-impl Copy for DriverInfo { }
+impl<'a> Copy for DriverInfo<'a> { }
 
 /// An output driver.
 ///
 /// This is an opaque handle.
 pub struct Driver<'a> {
     id: c_int,
-    marker: ContravariantLifetime<'a>,
+    marker: PhantomData<&'a ()>
 }
 
 impl<'a> Driver<'a> {
     /// Get the `DriverInfo` corresponding to this `Driver`.
-    pub fn get_info(&self) -> Option<DriverInfo> {
+    pub fn get_info(& self) -> Option<DriverInfo<'a>> {
         let id = self.id;
 
         /// Turn a non-null C string pointer into static string slice.
         ///
         /// Panics if the string is not valid UTF-8.
-        unsafe fn sstr(s: *const c_char) -> &'static str {
-            let ss = mem::transmute::<&*const c_char, &'static *const c_char>(&s);
-            str::from_utf8(c_str_to_bytes(ss)).unwrap()
+        unsafe fn sstr<'z>(s: *const c_char) -> &'z str {
+            str::from_utf8(CStr::from_ptr(s).to_bytes()).unwrap()
         }
 
         unsafe {
@@ -400,10 +399,16 @@ impl<'a> Driver<'a> {
     ///
     /// Returns `NotFile` if the requested driver is not a file output driver.
     pub fn open_file<T: Sample, S: Str>(&self,
-            format: &SampleFormat<T, S>, file: Path,
+            format: &SampleFormat<T, S>, file: &Path,
             overwrite: bool) -> AoResult<Device<'a, T>> {
 
-        let c_path = CString::from_vec(file.into_vec());
+        let c_path = match file.to_str() {
+            Some(s) => match CString::new(s) {
+                Ok(s) => s,
+                Err(_) => return Err(AoError::OpenFile)
+            },
+            None => return Err(AoError::OpenFile)
+        };
         let handle = format.with_native(|f| {
             unsafe {
                 ffi::ao_open_file(self.id, c_path.as_ptr(), overwrite as c_int, f, ptr::null())
@@ -417,8 +422,8 @@ impl<'a> Driver<'a> {
 /// An output device.
 pub struct Device<'a, S> {
     id: *mut ffi::ao_device,
-    marker0: ContravariantLifetime<'a>,
-    marker1: InvariantType<S>,
+    m0: PhantomData<&'a ()>,
+    m1: PhantomData<S>
 }
 
 impl<'a, S: Sample> Device<'a, S> {
@@ -430,8 +435,8 @@ impl<'a, S: Sample> Device<'a, S> {
         } else {
             Ok(Device {
                 id: handle,
-                marker0: ContravariantLifetime,
-                marker1: InvariantType,
+                m0: PhantomData,
+                m1: PhantomData
             })
         }
     }
