@@ -126,7 +126,7 @@ pub struct AutoFormatDevice<'a, S> {
     matrixes: Vec<S>
 }
 
-impl<'a, S: Str> AutoFormatDevice<'a, S> {
+impl<'a, S: AsRef<str>> AutoFormatDevice<'a, S> {
     /// Construct a new AutoFormatDevice.
     ///
     /// Will be backed by the specified driver, and the `matrixes` is a list where an element's
@@ -207,7 +207,7 @@ impl<'a, S: Str> AutoFormatDevice<'a, S> {
         if self.matrixes.len() <= nchannels {
             None
         } else {
-            Some(self.matrixes[nchannels].as_slice())
+            Some(self.matrixes[nchannels].as_ref())
         }
     }
 }
