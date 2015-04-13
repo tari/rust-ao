@@ -1,12 +1,12 @@
 
 [package]
 name = "ao"
-version = "0.5.1"
+version = "0.6.0"
 authors = [ "peter@taricorp.net" ]
 license = "BSD-2-Clause"
 
 description = "Bindings to Xiph.org's libao"
-documentation = "http://rust-ci.org/tari/rust-ao/doc/ao/"
+documentation = "http://rustdoc.taricorp.net/ao/ao/"
 repository = "https://bitbucket.org/tari/rust-ao/"
 readme = "README.md"
 keywords = ["audio", "bindings"]
@@ -14,3 +14,6 @@ keywords = ["audio", "bindings"]
 [lib]
 name = "ao"
 path = "src/lib.rs"
+
+[dependencies]
+libc = "*"

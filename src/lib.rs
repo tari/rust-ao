@@ -1,11 +1,8 @@
 #![crate_name = "ao"]
-#![doc(html_root_url = "http://www.rust-ci.org/tari/rust-ao/doc/ao/")]
+#![doc(html_root_url = "http://rustdoc.taricorp.net/ao/ao/")]
 #![crate_type = "lib"]
 
 #![deny(dead_code, missing_docs)]
-#![feature(unsafe_destructor)]
-
-#![feature(libc, core, os)]
 
 //! Bindings to libao, a low-level library for audio output.
 //!
@@ -47,9 +44,9 @@ use libc::{c_int, c_char};
 use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::fmt;
-use std::intrinsics::size_of;
+use std::io;
 use std::marker::PhantomData;
-use std::os;
+use std::mem::size_of;
 use std::path::Path;
 use std::str;
 use std::sync::atomic::{AtomicBool, Ordering, ATOMIC_BOOL_INIT};
@@ -62,7 +59,7 @@ pub mod auto;
 /// Output for libao functions that may fail.
 pub type AoResult<T> = Result<T, AoError>;
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 /// Result of (most) operations that may fail.
 pub enum AoError {
     /// No driver is available.
@@ -93,11 +90,9 @@ pub enum AoError {
     Unknown = ffi::AO_EFAIL as isize,
 }
 
-impl Copy for AoError { }
-
 impl AoError {
     fn from_errno() -> AoError {
-        match os::errno() as c_int {
+        match io::Error::last_os_error().raw_os_error().unwrap() as c_int {
             ffi::AO_ENODRIVER => AoError::NoDriver,
             ffi::AO_ENOTFILE => AoError::NotFile,
             ffi::AO_ENOTLIVE => AoError::NotLive,
@@ -183,7 +178,7 @@ pub struct SampleFormat<T, S> {
     marker: PhantomData<T>
 }
 
-impl<T: Sample, S: Str> SampleFormat<T, S> {
+impl<T: Sample, S: AsRef<str>> SampleFormat<T, S> {
     /// Construct a sample format specification.
     pub fn new(sample_rate: usize, channels: usize, byte_order: Endianness,
                matrix: Option<S>) -> SampleFormat<T, S> {
@@ -198,13 +193,11 @@ impl<T: Sample, S: Str> SampleFormat<T, S> {
 
     fn with_native<F, U>(&self, f: F) -> U
             where F: FnOnce(*const ffi::ao_sample_format) -> U {
-        let sample_size = unsafe {
-            size_of::<T>() * 8
-        };
+        let sample_size = size_of::<T>() * 8;
 
         let matrix: Option<CString> = match self.matrix {
             None => None,
-            Some(ref s) => CString::new(s.as_slice()).ok()
+            Some(ref s) => CString::new(s.as_ref()).ok()
         };
         // The caller of ao_open_* functions retains ownership of the ao_format
         // it passes in, but the native representation owns a raw C string.
@@ -223,7 +216,7 @@ impl<T: Sample, S: Str> SampleFormat<T, S> {
 }
 
 /// Sample byte ordering.
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Endianness {
     /// Least-significant byte first
     Little = ffi::AO_FMT_LITTLE as isize,
@@ -232,8 +225,6 @@ pub enum Endianness {
     /// Machine's default byte order
     Native = ffi::AO_FMT_NATIVE as isize,
 }
-
-impl Copy for Endianness { }
 
 /// Library owner.
 ///
@@ -296,7 +287,6 @@ impl AO {
     }
 }
 
-#[unsafe_destructor]
 impl Drop for AO {
     fn drop(&mut self) {
         unsafe {
@@ -307,15 +297,13 @@ impl Drop for AO {
 }
 
 /// The output type of a driver.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum DriverType {
     /// Live playback, such as a local sound card.
     Live,
     /// File output, such as to a `wav` file on disk.
     File
 }
-
-impl Copy for DriverType { }
 
 impl DriverType {
     fn from_c_int(n: c_int) -> DriverType {
@@ -328,7 +316,7 @@ impl DriverType {
 }
 
 /// Properties and metadata for a driver.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct DriverInfo<'a> {
     /// Type of the driver (live or file).
     pub flavor: DriverType,
@@ -344,8 +332,6 @@ pub struct DriverInfo<'a> {
     /// A driver-specified comment.
     pub comment: Option<&'a str>,
 }
-
-impl<'a> Copy for DriverInfo<'a> { }
 
 /// An output driver.
 ///
@@ -368,8 +354,12 @@ impl<'a> Driver<'a> {
         }
 
         unsafe {
-            ffi::ao_driver_info(id).as_ref().map(|info| {
-                DriverInfo {
+            let info = ffi::ao_driver_info(id);
+            if info.is_null() {
+                None
+            } else {
+                let ref info = *info;
+                Some(DriverInfo {
                     name: sstr(info.name),
                     short_name: sstr(info.short_name),
                     comment: if info.comment.is_null() {
@@ -378,8 +368,8 @@ impl<'a> Driver<'a> {
                         Some(sstr(info.comment))
                     },
                     flavor: DriverType::from_c_int(info.flavor),
-                }
-            })
+                })
+            }
         }
     }
 
@@ -387,7 +377,7 @@ impl<'a> Driver<'a> {
     ///
     /// Returns `NotLive` if the specified driver is not a live output driver.
     /// In this case, open the device as a file output instead.
-    pub fn open_live<T: Sample, S: Str>(&self,
+    pub fn open_live<T: Sample, S: AsRef<str>>(&self,
             format: &SampleFormat<T, S>) -> AoResult<Device<'a, T>> {
         let handle = format.with_native(|f| unsafe {
             ffi::ao_open_live(self.id, f, ptr::null())
@@ -402,7 +392,7 @@ impl<'a> Driver<'a> {
     /// automatically replace any existing file if `true`.
     ///
     /// Returns `NotFile` if the requested driver is not a file output driver.
-    pub fn open_file<T: Sample, S: Str>(&self,
+    pub fn open_file<T: Sample, S: AsRef<str>>(&self,
             format: &SampleFormat<T, S>, file: &Path,
             overwrite: bool) -> AoResult<Device<'a, T>> {
 
@@ -469,7 +459,6 @@ impl<'a, S: Sample> Device<'a, S> {
     }
 }
 
-#[unsafe_destructor]
 impl<'a, S> Drop for Device<'a, S> {
     fn drop(&mut self) {
         unsafe {
