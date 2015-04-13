@@ -10,19 +10,17 @@
 //! use ao::auto::{SampleBuffer, AutoFormatDevice};
 //! use std::error::Error;
 //!
-//! struct Stereo(u16, u16);
+//! struct StereoBuffer(Vec<(i16, i16)>);
 //! 
-//! impl<'z> SampleBuffer for &'z [Stereo] {
+//! impl<'z> SampleBuffer for StereoBuffer {
 //!     fn channels(&self) -> usize { 2 }
 //!     fn sample_rate(&self) -> usize { 44100 }
 //!     fn endianness(&self) -> ao::Endianness { ao::Endianness::Native }
 //!     fn sample_width(&self) -> usize { 16 }
 //!     fn data<'a>(&self) -> &'a [u8] { 
 //!         unsafe {
-//!             ::std::mem::transmute(::std::raw::Slice {
-//!                 data: self.as_ptr() as *const u8,
-//!                 len: self.len() * 4
-//!             })
+//!             std::slice::from_raw_parts(self.0.as_ptr() as *const u8,
+//!                                        self.0.len() * 4)
 //!         }
 //!     }
 //! }
@@ -32,8 +30,8 @@
 //!     let driver = lib.get_driver("").expect("No default driver available");
 //!     let mut device = AutoFormatDevice::new(driver, vec!["", "L", "L,R"]);
 //!
-//!     let data = vec![Stereo(16383, -16383)];
-//!     match device.play(&data.as_slice()) {
+//!     let data = StereoBuffer(vec![(16383, -16383)]);
+//!     match device.play(&data) {
 //!         Ok(_) => (),
 //!         Err(e) => println!("Playback failed: {}", e.description())
 //!     }

@@ -23,13 +23,13 @@
 //!     
 //! }
 //!
-//! fn play_sinusoid<S: Str>(driver: Driver, format: SampleFormat<i16, S>) {
+//! fn play_sinusoid<S: AsRef<str>>(driver: Driver, format: SampleFormat<i16, S>) {
 //!     match driver.open_file(&format, &Path::new("out.wav"), false) {
 //!         Ok(d) => {
 //!             let samples: Vec<i16> = (0..44100).map(|i| {
 //!                 ((1.0 / 44100.0 / 440.0 * i as f32).sin() * 32767.0) as i16
 //!             }).collect();
-//!             d.play(samples.as_slice());
+//!             d.play(&samples);
 //!         }
 //!         Err(e) => {
 //!             println!("Failed to open output file: {}", e.description());
