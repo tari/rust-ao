@@ -140,13 +140,11 @@ pub trait Sample : Copy {
 
 macro_rules! sample_impl(
     ($t:ty) => (
-        #[inline]
         impl Sample for $t {
             fn channels(&self) -> usize { 1 }
         }
     );
     (channels $w:expr) => (
-        #[inline]
         impl<S: Sample> Sample for [S; $w] {
             fn channels(&self) -> usize { $w }
         }
